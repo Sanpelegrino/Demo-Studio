@@ -1,0 +1,333 @@
+:root {
+  --bg: #0f1115;
+  --card: #171a21;
+  --border: #262a33;
+  --text: #e6e8ee;
+  --muted: #8a90a0;
+  --accent: #6ea8ff;
+  --accent-dim: #2a3d63;
+  --danger: #d95c5c;
+  --ok: #4caf82;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+header {
+  padding: 24px 32px 8px;
+}
+header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+header .sub { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+
+main {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 16px 32px 48px;
+  max-width: 1400px;
+}
+#history-card { grid-column: 1 / -1; }
+#pitfalls-card { grid-column: 1 / -1; }
+#pitfalls-text {
+  min-height: 160px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+}
+.card h2 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+.card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; gap: 8px; }
+.card-head h2 { margin: 0; }
+.card-head-actions { display: flex; gap: 10px; align-items: center; }
+
+/* iOS-style switch. <label class="toggle"> wraps a label span, a
+   hidden checkbox, and the visual track/thumb. */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  color: var(--muted);
+}
+.toggle-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.toggle-track {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: var(--border);
+  border-radius: 999px;
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+}
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: var(--text);
+  border-radius: 50%;
+  transition: transform 0.2s ease, background 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.toggle input:checked ~ .toggle-track { background: var(--accent); }
+.toggle input:checked ~ .toggle-track .toggle-thumb {
+  transform: translateX(16px);
+  background: #fff;
+}
+.toggle input:focus-visible ~ .toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.toggle:hover .toggle-track { background: var(--accent-dim); }
+.toggle input:checked ~ .toggle-track ~ .toggle-label,
+.toggle:has(input:checked) .toggle-label { color: var(--accent); }
+.card h3 { margin: 16px 0 8px; font-size: 14px; font-weight: 600; }
+.muted { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+
+.kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; margin: 12px 0; }
+.kv .k { color: var(--muted); }
+.kv .v code { background: var(--bg); padding: 2px 6px; border-radius: 4px; font-family: var(--mono); font-size: 12px; }
+
+details { margin: 10px 0; }
+details summary { cursor: pointer; color: var(--muted); }
+pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 8px 0;
+}
+
+textarea {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+button {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent-dim); border-color: var(--accent); }
+button.danger { color: var(--danger); border-color: var(--danger); }
+button.mini { padding: 2px 6px; font-size: 11px; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+
+.status { color: var(--muted); font-size: 12px; }
+.status.ok { color: var(--ok); }
+.status.err { color: var(--danger); }
+
+.hidden { display: none; }
+
+.plan-summary { font-weight: 500; margin: 8px 0; }
+.plan-meta { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+#history { list-style: none; padding: 0; margin: 0; }
+#history li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: 120px 80px 1fr;
+  gap: 12px;
+  font-size: 13px;
+}
+#history li:last-child { border-bottom: none; }
+
+.manifest-load { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.manifest-load > label { display: block; margin-bottom: 6px; font-size: 12.5px; }
+.manifest-load select {
+  flex: 1;
+  min-width: 200px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+.file-upload {
+  cursor: pointer;
+  display: inline-block;
+  padding: 4px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: 12.5px;
+  transition: background 0.1s;
+}
+.file-upload:hover { background: var(--accent-dim); }
+#history .history-item { cursor: pointer; transition: background 0.1s; padding-left: 8px; padding-right: 8px; margin: 0 -8px; border-radius: 4px; }
+#history .history-item:hover { background: rgba(110, 168, 255, 0.06); }
+#history .history-item.selected { background: var(--accent-dim); }
+
+#history-detail { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+#history-detail.hidden { display: none; }
+.history-detail-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.history-detail-head .tag { font-family: var(--mono); font-size: 11px; color: var(--accent); background: var(--accent-dim); padding: 2px 8px; border-radius: 4px; }
+.history-detail-head #history-detail-summary { flex: 1; }
+.history-detail-head #history-detail-close { margin-left: auto; }
+#history-detail-code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  max-height: 400px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+  white-space: pre;
+  margin: 0;
+}
+
+/* Maximized chat mode: hide everything except the chat card,
+   stretch it to the viewport. Works both via button toggle and
+   via #chat URL hash (useful for iframe embeds in Tableau). */
+body.chat-max { margin: 0; }
+body.chat-max header,
+body.chat-max #connection-card,
+body.chat-max #history-card { display: none; }
+body.chat-max main {
+  display: block;
+  padding: 0;
+  max-width: none;
+}
+body.chat-max #chat-card {
+  border: none;
+  border-radius: 0;
+  min-height: 100vh;
+  height: 100vh;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+}
+body.chat-max #chat-card .chat-intro { margin-bottom: 8px; }
+body.chat-max #chat-card #plan { flex: 1; overflow: auto; }
+body.chat-max #chat-card #plan-code { max-height: none; }
+
+/* history-only page (for dashboard embeds) */
+body.history-only { margin: 0; }
+body.history-only main {
+  display: block;
+  padding: 0;
+  max-width: none;
+}
+body.history-only #history-card {
+  border: none;
+  border-radius: 0;
+  min-height: 100vh;
+  padding: 16px 20px;
+}
+
+/* Dashboard-embed variant of the maximized chat — same layout as
+   body.chat-max, but with the raw SQL/Python code block hidden so
+   viewers only see the plan summary + notes. */
+html.embed body { margin: 0; }
+html.embed body > header,
+html.embed body > main > #connection-card { display: none; }
+html.embed body > main {
+  display: block;
+  padding: 0;
+  max-width: none;
+}
+html.embed #chat-card {
+  border: none;
+  border-radius: 0;
+  min-height: 100vh;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+}
+html.embed #chat-card #plan-code { display: none; }
+html.embed.show-code #chat-card #plan-code { display: block; }
+html.embed #chat-card .chat-intro { display: none; }
+html.embed #chat-card .card-head h2 { display: none; }
+html.embed #history-card {
+  border: none;
+  border-radius: 0;
+  grid-column: auto;
+  padding: 12px 20px 16px;
+}
+
+/* Tableau dashboard extension — renders inside a small zone in Tableau,
+   so keep it tight and fill the viewport. */
+body.ext-body { margin: 0; }
+body.ext-body main { display: block; padding: 0; max-width: none; }
+body.ext-body .card {
+  border: none;
+  border-radius: 0;
+  min-height: 100vh;
+  padding: 12px 16px;
+}
+.ext-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.ext-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.ext-row input[type="number"] {
+  width: 70px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: inherit;
+}
+.ext-kv { grid-template-columns: 120px 1fr; margin-top: 8px; font-size: 13px; }
+#history .when { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+#history .lang { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+#history .empty { color: var(--muted); padding: 8px 0; }

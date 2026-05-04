@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Demo Studio — Chat (embed)</title>
+  <link rel="stylesheet" href="/static/styles.css?v=2" />
+  <!-- Tableau Extensions API: present when this page is loaded inside a
+       dashboard extension zone, absent when served as a plain web page.
+       Loading it unconditionally is fine — if Tableau isn't the host,
+       the script is inert. -->
+  <script src="/static/tableau.extensions.1.latest.min.js"></script>
+  <script>
+    document.documentElement.classList.add("embed");
+    if (!location.hash) history.replaceState(null, "", location.pathname + "#chat");
+    // Best-effort extension init. Only calls when Tableau actually hosts
+    // this page; silently no-ops on the regular web page.
+    window.addEventListener("DOMContentLoaded", () => {
+      if (window.tableau && tableau.extensions && tableau.extensions.initializeAsync) {
+        tableau.extensions.initializeAsync().catch(() => {});
+      }
+    });
+  </script>
+</head>
+<body>
+  <!-- Reuses index.html's markup via the main app bundle. The CSS rule
+       html.embed #plan-code { display: none } strips just the code block. -->
+  <header>
+    <h1>Demo Studio</h1>
+    <p class="sub">Postgres · Salesforce-style accounts &amp; opportunities</p>
+  </header>
+
+  <main>
+    <section class="card" id="connection-card">
+      <h2>Tableau connection</h2>
+      <div class="kv">
+        <div class="k">Server</div><div class="v"><code id="conn-host">…</code></div>
+        <div class="k">Port</div><div class="v"><code id="conn-port">…</code></div>
+        <div class="k">Database</div><div class="v"><code id="conn-db">…</code></div>
+        <div class="k">Username</div><div class="v"><code id="conn-user">…</code></div>
+        <div class="k">Password</div><div class="v"><code id="conn-pass">…</code></div>
+        <div class="k">Schema</div><div class="v"><code id="conn-schema">…</code></div>
+        <div class="k">Tableau view</div><div class="v"><code id="conn-view">…</code></div>
+      </div>
+    </section>
+
+    <section class="card" id="chat-card">
+      <div class="card-head">
+        <h2>Chat</h2>
+        <div class="card-head-actions">
+          <label class="toggle">
+            <span class="toggle-label">Autorun</span>
+            <input type="checkbox" id="autorun" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+          <label class="toggle">
+            <span class="toggle-label">Show code</span>
+            <input type="checkbox" id="show-code" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+          <button id="apply-top" class="primary hidden">Apply</button>
+          <button id="discard-top" class="hidden">Discard</button>
+          <button id="maximize" class="mini hidden">Maximize</button>
+        </div>
+      </div>
+      <p class="muted chat-intro">Describe a change to the data or schema. Review the plan, then Apply.</p>
+      <textarea id="message" rows="3" placeholder="e.g. Add a health_score column to accounts that correlates with how many Closed Won opps they have."></textarea>
+      <div class="actions">
+        <button id="send" class="primary">Plan change</button>
+        <span id="status" class="status"></span>
+      </div>
+
+      <div id="plan" class="hidden">
+        <h3>Proposed change</h3>
+        <div class="plan-summary" id="plan-summary"></div>
+        <div class="plan-meta"><span class="tag" id="plan-lang"></span><span id="plan-notes" class="muted"></span></div>
+        <pre id="plan-code"></pre>
+      </div>
+    </section>
+
+    <section class="card" id="history-card">
+      <h2>History</h2>
+      <ul id="history"></ul>
+    </section>
+  </main>
+
+  <script src="/static/app.js?v=2"></script>
+</body>
+</html>

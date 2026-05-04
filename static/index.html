@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Demo Studio</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Demo Studio</h1>
+    <p class="sub">Postgres · Salesforce-style accounts &amp; opportunities</p>
+  </header>
+
+  <main>
+    <section class="card" id="connection-card">
+      <h2>Tableau connection</h2>
+      <p class="muted">In Tableau Desktop: <b>Connect → PostgreSQL</b>. Drag only the view <code id="conn-view-inline">demo.analytics</code> onto the canvas — not the raw tables. The agent updates the view automatically when it reshapes the underlying data.</p>
+      <div class="kv">
+        <div class="k">Server</div><div class="v"><code id="conn-host">…</code></div>
+        <div class="k">Port</div><div class="v"><code id="conn-port">…</code></div>
+        <div class="k">Database</div><div class="v"><code id="conn-db">…</code></div>
+        <div class="k">Username</div><div class="v"><code id="conn-user">…</code></div>
+        <div class="k">Password</div><div class="v"><code id="conn-pass">…</code> <button id="copy-pass" class="mini">copy</button></div>
+        <div class="k">Schema</div><div class="v"><code id="conn-schema">…</code></div>
+        <div class="k">Tableau view</div><div class="v"><code id="conn-view">…</code> <span id="conn-view-rows" class="muted"></span></div>
+        <div class="k">Underlying tables</div><div class="v muted" id="conn-tables">…</div>
+      </div>
+      <details>
+        <summary>Current schema</summary>
+        <pre id="schema">…</pre>
+      </details>
+      <details>
+        <summary>Sample rows</summary>
+        <pre id="sample">…</pre>
+      </details>
+      <div class="actions">
+        <button id="refresh">Refresh</button>
+        <button id="rollback">Rollback last change</button>
+        <select id="reseed-dataset" title="Starter dataset for reseed">
+          <option value="salesforce">Salesforce</option>
+          <option value="superstore">Superstore</option>
+        </select>
+        <button id="reseed" class="danger">Reseed from scratch</button>
+      </div>
+      <div class="manifest-load">
+        <label class="muted">Load a manifest dataset (CSVs + manifest.json):</label>
+        <div class="actions">
+          <select id="manifest-select">
+            <option value="">— select dataset —</option>
+          </select>
+          <button id="manifest-load" class="danger">Load</button>
+          <span class="muted">or</span>
+          <label class="file-upload mini">
+            Upload .zip
+            <input type="file" id="manifest-upload" accept=".zip" hidden />
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="chat-card">
+      <div class="card-head">
+        <h2>Chat</h2>
+        <div class="card-head-actions">
+          <label class="toggle" title="When on, changes are applied automatically — no approval step.">
+            <span class="toggle-label">Autorun</span>
+            <input type="checkbox" id="autorun" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+          <button id="apply-top" class="primary hidden">Apply</button>
+          <button id="discard-top" class="hidden">Discard</button>
+          <button id="maximize" class="mini" title="Maximize chat to fill the window">Maximize</button>
+        </div>
+      </div>
+      <p class="muted chat-intro">Describe a change to the data or schema. Claude proposes SQL or Python against Postgres. Review, then Apply.</p>
+      <textarea id="message" rows="3" placeholder="e.g. Add a health_score column to accounts that correlates with how many Closed Won opps they have. Drop the is_active column."></textarea>
+      <div class="actions">
+        <button id="send" class="primary">Plan change</button>
+        <span id="status" class="status"></span>
+      </div>
+
+      <div id="plan" class="hidden">
+        <h3>Proposed change</h3>
+        <div class="plan-summary" id="plan-summary"></div>
+        <div class="plan-meta"><span class="tag" id="plan-lang"></span><span id="plan-notes" class="muted"></span></div>
+        <pre id="plan-code"></pre>
+      </div>
+    </section>
+
+    <section class="card" id="history-card">
+      <h2>History</h2>
+      <ul id="history"></ul>
+      <div id="history-detail" class="hidden">
+        <div class="history-detail-head">
+          <span class="tag" id="history-detail-lang"></span>
+          <span id="history-detail-summary" class="muted"></span>
+          <button id="history-detail-close" class="mini">Close</button>
+        </div>
+        <pre id="history-detail-code"></pre>
+      </div>
+    </section>
+
+    <section class="card" id="pitfalls-card">
+      <div class="card-head">
+        <h2>Pitfalls</h2>
+        <div class="card-head-actions">
+          <span id="pitfalls-raw-count" class="muted">…</span>
+          <button id="pitfalls-download" class="mini">Download raw log</button>
+          <button id="pitfalls-clear" class="mini danger">Clear raw log</button>
+          <button id="pitfalls-save" class="primary">Save curated</button>
+        </div>
+      </div>
+      <p class="muted">Every failed Apply is logged to <code>prompts/pitfalls_raw.jsonl</code>. Periodically download it, distill into guidance, and paste the cleaned-up version below — it's appended to Claude's system prompt on every call.</p>
+      <textarea id="pitfalls-text" rows="8" spellcheck="false" placeholder="# Pitfalls — things the model has gotten wrong before…"></textarea>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

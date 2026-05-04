@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Live Refresh</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <!-- Tableau Extensions API (served locally so no CDN dependency) -->
+  <script src="/static/tableau.extensions.1.latest.min.js"></script>
+</head>
+<body class="ext-body">
+  <main>
+    <section class="card">
+      <div class="card-head">
+        <h2>Live Refresh</h2>
+        <span id="state" class="tag">disconnected</span>
+      </div>
+      <p class="muted">Refreshes this dashboard's data sources as soon as the workspace changes. No polling — the app pushes events over a live stream.</p>
+
+      <div class="ext-row">
+        <button id="refresh-now">Refresh now</button>
+      </div>
+
+      <div class="kv ext-kv">
+        <div class="k">Data sources</div><div class="v" id="ds-list">(loading…)</div>
+        <div class="k">Last event</div><div class="v" id="last-event">—</div>
+        <div class="k">Last refresh</div><div class="v" id="last">—</div>
+      </div>
+
+      <details>
+        <summary>Activity log</summary>
+        <pre id="log"></pre>
+      </details>
+    </section>
+  </main>
+  <script src="/static/extension.js"></script>
+</body>
+</html>

@@ -4,13 +4,20 @@ Interactive dataset builder for Tableau. Chat with an AI agent to reshape Postgr
 
 ## Quick start
 
-```bash
-pip install -r requirements.txt
-cp .env.example .env          # fill in Bedrock token + Postgres creds
-uvicorn app:app --reload --port 3777
+**Windows:**
+```
+install.bat
 ```
 
-Open <http://localhost:3777>. First boot seeds a starter dataset automatically.
+**Mac/Linux:**
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+The install script sets up Python, PostgreSQL, creates the database, installs dependencies, and prompts for your Bedrock bearer token. After setup, the app launches at <http://localhost:3777>.
+
+For subsequent launches: `start.bat` (Windows) or `./start.sh` (Mac/Linux).
 
 ## Documentation
 

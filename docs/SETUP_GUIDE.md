@@ -2,14 +2,42 @@
 
 This guide is for agents or engineers setting up Demo Studio from scratch.
 
-## Prerequisites
+## Quick Install (Recommended)
 
-- Python 3.11+
-- PostgreSQL 14+ (local or remote)
+The install script handles everything — Python, PostgreSQL, database creation, dependencies, and configuration:
+
+**Windows:**
+```
+install.bat
+```
+
+**Mac/Linux:**
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+The script will prompt you for your Anthropic bearer token. After setup completes, the app launches automatically at <http://localhost:3777>.
+
+For subsequent launches (after initial install):
+
+**Windows:** `start.bat`  
+**Mac/Linux:** `./start.sh`
+
+---
+
+## Manual Setup
+
+If you prefer to set things up manually, or if the install script fails on a specific step:
+
+### Prerequisites
+
+- Python 3.10+
+- PostgreSQL 14+ (local)
 - A Salesforce Bedrock gateway endpoint with a valid auth token (Claude via Anthropic-on-Bedrock)
 - (Optional) Tableau Desktop for dashboard integration
 
-## Installation
+### Installation
 
 ```bash
 cd "Demo Studio"
@@ -23,7 +51,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Environment variables
+### Environment variables
 
 Copy the example and fill in your values:
 
@@ -46,7 +74,7 @@ Required variables:
 | `PGDATABASE` | Database name (default: `demo_studio`) |
 | `PGSCHEMA` | Working schema (default: `demo`) |
 
-## Database setup
+### Database setup
 
 Create the database and user (as a Postgres superuser):
 
@@ -57,7 +85,7 @@ CREATE DATABASE demo_studio OWNER demo_studio;
 
 The application creates the `demo` and `snapshots` schemas automatically on first boot. No manual migration required.
 
-## Running the server
+### Running the server
 
 ```bash
 uvicorn app:app --reload --port 3777
@@ -65,7 +93,7 @@ uvicorn app:app --reload --port 3777
 
 The server:
 1. Checks if the `demo` schema has any tables.
-2. If empty, seeds the default Salesforce-style dataset (400 accounts, ~2,000 opportunities, `demo.analytics` view).
+2. If empty, seeds the default Superstore dataset (orders, returns, people).
 3. Starts accepting requests on <http://localhost:3777>.
 
 ## Architecture

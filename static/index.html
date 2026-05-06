@@ -8,14 +8,15 @@
 <body>
   <header>
     <h1>Demo Studio</h1>
-    <p class="sub">Postgres · Salesforce-style accounts &amp; opportunities</p>
+    <p class="sub">Postgres-backed dataset builder for Tableau</p>
   </header>
 
   <main>
     <section class="card" id="connection-card">
       <h2>Tableau connection</h2>
-      <p class="muted">In Tableau Desktop: <b>Connect → PostgreSQL</b>. Drag only the view <code id="conn-view-inline">demo.analytics</code> onto the canvas — not the raw tables. The agent updates the view automatically when it reshapes the underlying data.</p>
+      <p class="muted">In Tableau Desktop: <b>Connect → PostgreSQL</b>. Drag only the view <code id="conn-view-inline">…</code> onto the canvas — not the raw tables. The agent updates the view automatically when it reshapes the underlying data.</p>
       <div class="kv">
+        <div class="k">Active dataset</div><div class="v"><strong id="conn-dataset">…</strong></div>
         <div class="k">Server</div><div class="v"><code id="conn-host">…</code></div>
         <div class="k">Port</div><div class="v"><code id="conn-port">…</code></div>
         <div class="k">Database</div><div class="v"><code id="conn-db">…</code></div>
@@ -36,19 +37,15 @@
       <div class="actions">
         <button id="refresh">Refresh</button>
         <button id="rollback">Rollback last change</button>
-        <select id="reseed-dataset" title="Starter dataset for reseed">
-          <option value="salesforce">Salesforce</option>
-          <option value="superstore">Superstore</option>
-        </select>
-        <button id="reseed" class="danger">Reseed from scratch</button>
       </div>
-      <div class="manifest-load">
-        <label class="muted">Load a manifest dataset (CSVs + manifest.json):</label>
+      <div class="dataset-switch">
+        <label class="muted">Switch or reset dataset:</label>
         <div class="actions">
-          <select id="manifest-select">
-            <option value="">— select dataset —</option>
+          <select id="dataset-select">
+            <option value="salesforce">Salesforce (built-in)</option>
+            <option value="superstore">Superstore (built-in)</option>
           </select>
-          <button id="manifest-load" class="danger">Load</button>
+          <button id="dataset-load" class="danger">Load</button>
           <span class="muted">or</span>
           <label class="file-upload mini">
             Upload .zip
@@ -67,6 +64,10 @@
             <input type="checkbox" id="autorun" />
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
           </label>
+          <select id="model-select">
+            <option value="us.anthropic.claude-sonnet-4-5-20250929-v1:0">Sonnet 4.5</option>
+            <option value="us.anthropic.claude-opus-4-0-20250514-v1:0">Opus 4</option>
+          </select>
           <button id="apply-top" class="primary hidden">Apply</button>
           <button id="discard-top" class="hidden">Discard</button>
           <button id="maximize" class="mini" title="Maximize chat to fill the window">Maximize</button>
@@ -100,19 +101,7 @@
       </div>
     </section>
 
-    <section class="card" id="pitfalls-card">
-      <div class="card-head">
-        <h2>Pitfalls</h2>
-        <div class="card-head-actions">
-          <span id="pitfalls-raw-count" class="muted">…</span>
-          <button id="pitfalls-download" class="mini">Download raw log</button>
-          <button id="pitfalls-clear" class="mini danger">Clear raw log</button>
-          <button id="pitfalls-save" class="primary">Save curated</button>
-        </div>
-      </div>
-      <p class="muted">Every failed Apply is logged to <code>prompts/pitfalls_raw.jsonl</code>. Periodically download it, distill into guidance, and paste the cleaned-up version below — it's appended to Claude's system prompt on every call.</p>
-      <textarea id="pitfalls-text" rows="8" spellcheck="false" placeholder="# Pitfalls — things the model has gotten wrong before…"></textarea>
-    </section>
+
   </main>
 
   <script src="/static/app.js"></script>

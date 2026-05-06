@@ -33,8 +33,8 @@ def _conn_kwargs() -> dict:
     return {
         "host": os.environ.get("PGHOST", "127.0.0.1"),
         "port": int(os.environ.get("PGPORT", "5432")),
-        "user": os.environ.get("PGUSER", "pulse_app"),
-        "password": os.environ.get("PGPASSWORD", "pulse_local_dev"),
+        "user": os.environ.get("PGUSER", "demo_studio"),
+        "password": os.environ.get("PGPASSWORD", "demo_local_dev"),
         "dbname": os.environ.get("PGDATABASE", "demo_studio"),
     }
 

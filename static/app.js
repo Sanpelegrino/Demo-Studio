@@ -5,11 +5,14 @@ let lastUserMessage = "";
 
 const AUTORUN_KEY = "demo-studio.autorun";
 const SHOW_CODE_KEY = "demo-studio.show-code";
+const MODEL_KEY = "demo-studio.model";
 const autorunEnabled = () => !!$("#autorun")?.checked;
+const selectedModel = () => $("#model-select")?.value || null;
 
 async function api(path, opts = {}) {
+  const headers = opts.body ? { "Content-Type": "application/json" } : {};
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
+    headers,
     ...opts,
   });
   if (!res.ok) {
@@ -32,6 +35,7 @@ function fmtTime(ts) {
 
 function renderHistory(items) {
   const ul = $("#history");
+  if (!ul) return;
   ul.innerHTML = "";
   if (!items.length) {
     ul.innerHTML = '<li class="empty">No changes yet.</li>';
@@ -102,8 +106,14 @@ async function refresh() {
   setText("#conn-view-rows",
     s.tableau_view_row_count ? `(${s.tableau_view_row_count.toLocaleString()} rows)` : "");
   setText("#conn-tables", s.tables.join(", ") || "(none)");
+  setText("#conn-dataset", s.active_dataset || "");
   setText("#schema", s.schema);
   setText("#sample", s.sample);
+  const embedCtx = $("#embed-context");
+  if (embedCtx) {
+    const rows = s.tableau_view_row_count ? ` (${s.tableau_view_row_count.toLocaleString()} rows)` : "";
+    embedCtx.textContent = viewName + rows;
+  }
   renderHistory(s.history || []);
 }
 
@@ -112,12 +122,14 @@ function showPlan(plan) {
   $("#plan-summary").textContent = plan.summary || "(no summary)";
   $("#plan-lang").textContent = plan.language;
   $("#plan-notes").textContent = plan.notes ? `· ${plan.notes}` : "";
-  // embed.html omits this element so dashboard viewers don't see raw SQL.
   const codeEl = $("#plan-code");
   if (codeEl) codeEl.textContent = plan.code;
   $("#plan").classList.remove("hidden");
   $("#apply-top").classList.remove("hidden");
   $("#discard-top").classList.remove("hidden");
+  // Re-apply show-code state so the inline style is set on the now-visible element.
+  const sc = $("#show-code");
+  if (sc) applyShowCode(sc.checked);
 }
 
 function hidePlan() {
@@ -138,7 +150,7 @@ $("#send").addEventListener("click", async () => {
   try {
     const plan = await api("/api/chat", {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, model: selectedModel() }),
     });
     showPlan(plan);
     if (auto) {
@@ -200,81 +212,67 @@ $("#discard-top").addEventListener("click", () => {
   setStatus("Discarded.");
 });
 
-$("#rollback").addEventListener("click", async () => {
-  if (!confirm("Roll back the most recent change?")) return;
-  try {
-    const r = await api("/api/rollback", { method: "POST" });
-    setStatus(`Rolled back: ${r.summary}`, "ok");
-    await refresh();
-  } catch (e) {
-    setStatus(e.message, "err");
-  }
-});
+if ($("#rollback")) {
+  $("#rollback").addEventListener("click", async () => {
+    if (!confirm("Roll back the most recent change?")) return;
+    try {
+      const r = await api("/api/rollback", { method: "POST" });
+      setStatus(`Rolled back: ${r.summary}`, "ok");
+      await refresh();
+    } catch (e) {
+      setStatus(e.message, "err");
+    }
+  });
+}
 
-$("#reseed").addEventListener("click", async () => {
-  const dataset = $("#reseed-dataset").value || "salesforce";
-  const label = dataset === "superstore" ? "Superstore" : "Salesforce";
-  if (!confirm(`Wipe workspace and reseed with ${label}?`)) return;
-  try {
-    await api(`/api/reseed?dataset=${encodeURIComponent(dataset)}`, { method: "POST" });
-    setStatus(`Reseeded with ${label}.`, "ok");
-    await refresh();
-  } catch (e) {
-    setStatus(e.message, "err");
-  }
-});
-
-$("#refresh").addEventListener("click", refresh);
+if ($("#refresh")) $("#refresh").addEventListener("click", refresh);
 
 async function refreshDatasets() {
-  const sel = $("#manifest-select");
+  const sel = $("#dataset-select");
   if (!sel) return;
   try {
     const res = await api("/api/datasets");
-    const prev = sel.value;
-    sel.innerHTML = '<option value="">— select dataset —</option>';
+    // Remove previously-added manifest options (keep built-ins).
+    sel.querySelectorAll("option[data-manifest]").forEach((o) => o.remove());
     for (const d of res.datasets) {
       const opt = document.createElement("option");
-      opt.value = d.folder;
+      opt.value = `manifest:${d.folder}`;
       opt.textContent = d.name;
+      opt.dataset.manifest = "1";
       sel.appendChild(opt);
     }
-    if (prev) sel.value = prev;
   } catch { /* ignore — list is a convenience */ }
 }
 
-async function loadManifestFolder(folder) {
-  if (!folder) {
-    setStatus("Select a dataset first.", "err");
-    return;
-  }
-  if (!confirm(`Wipe the workspace and load:\n${folder}?`)) return;
-  setStatus("Loading manifest…");
-  const btn = $("#manifest-load");
-  if (btn) btn.disabled = true;
-  try {
-    const res = await api("/api/load-manifest", {
-      method: "POST",
-      body: JSON.stringify({ folder }),
-    });
-    const tableCount = Object.keys(res.tables || {}).length;
-    const rowTotal = Object.values(res.tables || {}).reduce((a, b) => a + b, 0);
-    setStatus(
-      `Loaded ${res.dataset}: ${tableCount} tables, ${rowTotal.toLocaleString()} rows.`,
-      "ok",
-    );
-    await refreshAll();
-  } catch (e) {
-    setStatus(e.message, "err");
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-if ($("#manifest-load")) {
-  $("#manifest-load").addEventListener("click", () => {
-    const sel = $("#manifest-select");
-    loadManifestFolder(sel ? sel.value : "");
+if ($("#dataset-load")) {
+  $("#dataset-load").addEventListener("click", async () => {
+    const sel = $("#dataset-select");
+    const val = sel ? sel.value : "salesforce";
+    const label = sel ? sel.options[sel.selectedIndex].textContent : val;
+    if (!confirm(`Wipe workspace and load: ${label}?`)) return;
+    const btn = $("#dataset-load");
+    if (btn) btn.disabled = true;
+    setStatus("Loading…");
+    try {
+      if (val.startsWith("manifest:")) {
+        const folder = val.slice("manifest:".length);
+        const res = await api("/api/load-manifest", {
+          method: "POST",
+          body: JSON.stringify({ folder }),
+        });
+        const tableCount = Object.keys(res.tables || {}).length;
+        const rowTotal = Object.values(res.tables || {}).reduce((a, b) => a + b, 0);
+        setStatus(`Loaded ${res.dataset}: ${tableCount} tables, ${rowTotal.toLocaleString()} rows.`, "ok");
+      } else {
+        await api(`/api/reseed?dataset=${encodeURIComponent(val)}`, { method: "POST" });
+        setStatus(`Loaded ${label}.`, "ok");
+      }
+      await refreshAll();
+    } catch (e) {
+      setStatus(e.message, "err");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   });
 }
 
@@ -294,9 +292,8 @@ if ($("#manifest-upload")) {
       const data = await res.json();
       setStatus(`Uploaded ${data.name}. Select it and click Load.`, "ok");
       await refreshDatasets();
-      // Auto-select the just-uploaded dataset.
-      const sel = $("#manifest-select");
-      if (sel) sel.value = data.folder;
+      const sel = $("#dataset-select");
+      if (sel) sel.value = `manifest:${data.folder}`;
     } catch (err) {
       setStatus(err.message, "err");
     }
@@ -304,15 +301,17 @@ if ($("#manifest-upload")) {
   });
 }
 
-$("#copy-pass").addEventListener("click", async () => {
-  const text = $("#conn-pass").textContent;
-  try {
-    await navigator.clipboard.writeText(text);
-    setStatus("Password copied.", "ok");
-  } catch {
-    setStatus("Copy failed — select manually.", "err");
-  }
-});
+if ($("#copy-pass")) {
+  $("#copy-pass").addEventListener("click", async () => {
+    const text = $("#conn-pass").textContent;
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus("Password copied.", "ok");
+    } catch {
+      setStatus("Copy failed — select manually.", "err");
+    }
+  });
+}
 
 function applyMaxMode(on) {
   document.body.classList.toggle("chat-max", on);
@@ -322,9 +321,11 @@ function applyMaxMode(on) {
   else if (location.hash === "#chat") history.replaceState(null, "", location.pathname);
 }
 
-$("#maximize").addEventListener("click", () => {
-  applyMaxMode(!document.body.classList.contains("chat-max"));
-});
+if ($("#maximize")) {
+  $("#maximize").addEventListener("click", () => {
+    applyMaxMode(!document.body.classList.contains("chat-max"));
+  });
+}
 
 // Enter maximized mode if URL hash is #chat (for iframe embeds).
 if (location.hash === "#chat") applyMaxMode(true);
@@ -338,78 +339,39 @@ if (autorunEl) {
   });
 }
 
+// Model selector — persist across reloads.
+const modelEl = $("#model-select");
+if (modelEl) {
+  const saved = localStorage.getItem(MODEL_KEY);
+  if (saved) modelEl.value = saved;
+  modelEl.addEventListener("change", () => {
+    localStorage.setItem(MODEL_KEY, modelEl.value);
+  });
+}
+
 // Show-code toggle (embed/extension only) — off by default, persisted.
-// Sets inline style directly on #plan-code to bypass any CSS cache in the
-// Tableau extension webview.
+// Toggles .show-code on <html> AND sets inline style as a belt-and-suspenders
+// fix for Tableau extension webviews where CSS specificity can be unreliable.
 const showCodeEl = $("#show-code");
 function applyShowCode(on) {
   document.documentElement.classList.toggle("show-code", on);
   const codeEl = $("#plan-code");
-  if (codeEl) codeEl.style.display = on ? "block" : "none";
+  if (codeEl) codeEl.style.setProperty("display", on ? "block" : "none", "important");
 }
 if (showCodeEl) {
-  const on = localStorage.getItem(SHOW_CODE_KEY) === "1";
-  showCodeEl.checked = on;
-  applyShowCode(on);
+  let stored = false;
+  try { stored = localStorage.getItem(SHOW_CODE_KEY) === "1"; } catch {}
+  showCodeEl.checked = stored;
+  applyShowCode(stored);
   showCodeEl.addEventListener("change", () => {
-    localStorage.setItem(SHOW_CODE_KEY, showCodeEl.checked ? "1" : "0");
-    applyShowCode(showCodeEl.checked);
-  });
-}
-
-// --- Pitfalls panel (only present on the main page, not on /embed) ---
-async function loadPitfalls() {
-  const textEl = $("#pitfalls-text");
-  const countEl = $("#pitfalls-raw-count");
-  if (!textEl || !countEl) return;
-  try {
-    const p = await api("/api/pitfalls");
-    textEl.value = p.curated || "";
-    countEl.textContent = p.raw_count
-      ? `${p.raw_count} failure${p.raw_count === 1 ? "" : "s"} logged`
-      : "no failures logged";
-  } catch (e) {
-    countEl.textContent = "error: " + e.message;
-  }
-}
-
-if ($("#pitfalls-save")) {
-  $("#pitfalls-save").addEventListener("click", async () => {
-    const curated = $("#pitfalls-text").value;
-    try {
-      await api("/api/pitfalls", {
-        method: "PUT",
-        body: JSON.stringify({ curated }),
-      });
-      setStatus("Pitfalls saved. Future chats will use the new guidance.", "ok");
-    } catch (e) {
-      setStatus(e.message, "err");
-    }
-  });
-}
-
-if ($("#pitfalls-download")) {
-  $("#pitfalls-download").addEventListener("click", () => {
-    window.location.href = "/api/pitfalls/raw";
-  });
-}
-
-if ($("#pitfalls-clear")) {
-  $("#pitfalls-clear").addEventListener("click", async () => {
-    if (!confirm("Clear the raw failure log? (Keeps your curated pitfalls.)")) return;
-    try {
-      await fetch("/api/pitfalls/raw", { method: "DELETE" });
-      await loadPitfalls();
-      setStatus("Raw failure log cleared.", "ok");
-    } catch (e) {
-      setStatus(e.message, "err");
-    }
+    const on = showCodeEl.checked;
+    try { localStorage.setItem(SHOW_CODE_KEY, on ? "1" : "0"); } catch {}
+    applyShowCode(on);
   });
 }
 
 async function refreshAll() {
   await refresh();
-  await loadPitfalls();
   await refreshDatasets();
 }
 

@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import random
 from datetime import date, timedelta
-from typing import Iterable
 
 import psycopg
 from psycopg import sql
@@ -57,8 +56,8 @@ def _conn_kwargs() -> dict:
     return {
         "host": os.environ.get("PGHOST", "127.0.0.1"),
         "port": int(os.environ.get("PGPORT", "5432")),
-        "user": os.environ.get("PGUSER", "pulse_app"),
-        "password": os.environ.get("PGPASSWORD", "pulse_local_dev"),
+        "user": os.environ.get("PGUSER", "demo_studio"),
+        "password": os.environ.get("PGPASSWORD", "demo_local_dev"),
         "dbname": os.environ.get("PGDATABASE", "demo_studio"),
     }
 
@@ -151,7 +150,7 @@ def seed(account_count: int = 400, opps_per_account_avg: int = 5, seed_value: in
 
     with psycopg.connect(**_conn_kwargs()) as con:
         con.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema)))
-        con.execute(sql.SQL("DROP VIEW IF EXISTS {}.analytics CASCADE").format(sql.Identifier(schema)))
+        # Tables are created fresh — caller is responsible for wiping schema first.
         con.execute(sql.SQL("DROP TABLE IF EXISTS {}.opportunities CASCADE").format(sql.Identifier(schema)))
         con.execute(sql.SQL("DROP TABLE IF EXISTS {}.accounts CASCADE").format(sql.Identifier(schema)))
 
@@ -220,10 +219,8 @@ def seed(account_count: int = 400, opps_per_account_avg: int = 5, seed_value: in
                 opportunities,
             )
 
-        # Tableau connects to this view. The LLM is expected to keep it
-        # in sync with the underlying tables after any DDL change.
         con.execute(sql.SQL("""
-            CREATE OR REPLACE VIEW {schema}.analytics AS
+            CREATE OR REPLACE VIEW {schema}.salesforce AS
             SELECT
                 o.opportunity_id,
                 o.opportunity_name,

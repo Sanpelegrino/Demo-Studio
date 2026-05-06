@@ -36,13 +36,6 @@ main {
   max-width: 1400px;
 }
 #history-card { grid-column: 1 / -1; }
-#pitfalls-card { grid-column: 1 / -1; }
-#pitfalls-text {
-  min-height: 160px;
-  font-family: var(--mono);
-  font-size: 12.5px;
-  line-height: 1.5;
-}
 
 .card {
   background: var(--card);
@@ -54,6 +47,9 @@ main {
 .card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; gap: 8px; }
 .card-head h2 { margin: 0; }
 .card-head-actions { display: flex; gap: 10px; align-items: center; }
+#chat-card { box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+#model-select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+.dataset-switch { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
 
 /* iOS-style switch. <label class="toggle"> wraps a label span, a
    hidden checkbox, and the visual track/thumb. */
@@ -106,7 +102,8 @@ main {
 .toggle input:checked ~ .toggle-track ~ .toggle-label,
 .toggle:has(input:checked) .toggle-label { color: var(--accent); }
 .card h3 { margin: 16px 0 8px; font-size: 14px; font-weight: 600; }
-.muted { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+.muted { color: var(--muted); font-size: 13px; }
+p.muted, .chat-intro { margin: 0 0 12px; }
 
 .kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; margin: 12px 0; }
 .kv .k { color: var(--muted); }
@@ -114,6 +111,7 @@ main {
 
 details { margin: 10px 0; }
 details summary { cursor: pointer; color: var(--muted); }
+details summary:hover { color: var(--text); }
 pre {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -137,6 +135,7 @@ textarea {
   font-size: 14px;
   resize: vertical;
 }
+textarea:focus, select:focus { border-color: var(--accent); outline: none; }
 
 button {
   background: var(--card);
@@ -147,9 +146,12 @@ button {
   cursor: pointer;
   font-size: 13px;
 }
-button:hover { border-color: var(--accent); }
+button:hover { border-color: var(--accent); background: var(--accent-dim); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 button.primary { background: var(--accent-dim); border-color: var(--accent); }
+button.primary:hover { filter: brightness(1.2); }
 button.danger { color: var(--danger); border-color: var(--danger); }
+button.danger:hover { background: var(--danger); color: #fff; }
 button.mini { padding: 2px 6px; font-size: 11px; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -183,18 +185,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 #history li:last-child { border-bottom: none; }
 
-.manifest-load { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
-.manifest-load > label { display: block; margin-bottom: 6px; font-size: 12.5px; }
-.manifest-load select {
-  flex: 1;
-  min-width: 200px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--text);
-  font-size: 13px;
-  padding: 6px 8px;
-  border-radius: 4px;
-}
 .file-upload {
   cursor: pointer;
   display: inline-block;
@@ -289,16 +279,9 @@ html.embed #chat-card {
   display: flex;
   flex-direction: column;
 }
-html.embed #chat-card #plan-code { display: none; }
-html.embed.show-code #chat-card #plan-code { display: block; }
+html.embed #chat-card #plan-code { display: none !important; }
+html.embed.show-code #chat-card #plan-code { display: block !important; }
 html.embed #chat-card .chat-intro { display: none; }
-html.embed #chat-card .card-head h2 { display: none; }
-html.embed #history-card {
-  border: none;
-  border-radius: 0;
-  grid-column: auto;
-  padding: 12px 20px 16px;
-}
 
 /* Tableau dashboard extension — renders inside a small zone in Tableau,
    so keep it tight and fill the viewport. */

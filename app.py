@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import threading
@@ -25,7 +26,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from planner import Plan, Planner
+from planner import PITFALLS_RAG_PATH, Plan, Planner, lookup_pitfalls_rag
 from seed import seed as seed_workspace
 from seed_manifest import load_manifest
 from seed_superstore import seed_superstore
@@ -45,13 +46,17 @@ load_dotenv(BASE_DIR / ".env")
 
 LIVE_SCHEMA = os.environ.get("PGSCHEMA", "demo")
 
+# Active dataset state — tracks which dataset/view the LLM should maintain.
+_active_dataset: str = "salesforce"
+_active_view: str = "salesforce"
+
 
 def _conn_kwargs() -> dict:
     return {
         "host": os.environ.get("PGHOST", "127.0.0.1"),
         "port": int(os.environ.get("PGPORT", "5432")),
-        "user": os.environ.get("PGUSER", "pulse_app"),
-        "password": os.environ.get("PGPASSWORD", "pulse_local_dev"),
+        "user": os.environ.get("PGUSER", "demo_studio"),
+        "password": os.environ.get("PGPASSWORD", "demo_local_dev"),
         "dbname": os.environ.get("PGDATABASE", "demo_studio"),
     }
 
@@ -60,8 +65,96 @@ def connect() -> psycopg.Connection:
     return psycopg.connect(**_conn_kwargs())
 
 
+def _nuke_schema() -> None:
+    """Drop ALL views and tables in the live schema. Guaranteed clean slate."""
+    with connect() as con, con.cursor() as cur:
+        cur.execute(
+            "SELECT table_name FROM information_schema.views "
+            "WHERE table_schema = %s", (LIVE_SCHEMA,)
+        )
+        for (name,) in cur.fetchall():
+            cur.execute(
+                psycopg.sql.SQL("DROP VIEW IF EXISTS {}.{} CASCADE").format(
+                    psycopg.sql.Identifier(LIVE_SCHEMA),
+                    psycopg.sql.Identifier(name),
+                )
+            )
+        cur.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = %s AND table_type = 'BASE TABLE'",
+            (LIVE_SCHEMA,)
+        )
+        for (name,) in cur.fetchall():
+            cur.execute(
+                psycopg.sql.SQL("DROP TABLE IF EXISTS {}.{} CASCADE").format(
+                    psycopg.sql.Identifier(LIVE_SCHEMA),
+                    psycopg.sql.Identifier(name),
+                )
+            )
+        con.commit()
+
+
 _apply_lock = threading.Lock()
 _pitfalls_lock = threading.Lock()
+
+PITFALLS_DISTILL_THRESHOLD = 5
+PITFALLS_MAX_LINES = 120
+_distill_in_progress = threading.Event()
+
+
+def _raw_pitfall_count() -> int:
+    if not PITFALLS_RAW_PATH.exists():
+        return 0
+    with PITFALLS_RAW_PATH.open("r", encoding="utf-8") as f:
+        return sum(1 for _ in f)
+
+
+def _distill_pitfalls_background() -> None:
+    """Run pitfalls distillation in a background thread."""
+    if _distill_in_progress.is_set():
+        return
+    _distill_in_progress.set()
+    try:
+        log = logging.getLogger(__name__)
+        log.info("Auto-distilling pitfalls (%d raw entries)…", _raw_pitfall_count())
+        updated = planner.distill_pitfalls()
+        if updated is None:
+            return
+
+        lines = updated.strip().splitlines()
+        if len(lines) > PITFALLS_MAX_LINES:
+            log.warning(
+                "Distilled pitfalls (%d lines) exceeds cap (%d). "
+                "Truncating to keep prompt size manageable.",
+                len(lines), PITFALLS_MAX_LINES,
+            )
+            updated = "\n".join(lines[:PITFALLS_MAX_LINES]) + "\n"
+
+        PITFALLS_PATH.write_text(updated, encoding="utf-8")
+
+        log.info("Building pitfalls RAG store…")
+        try:
+            rag_entries = planner.build_pitfalls_rag()
+            PITFALLS_RAG_PATH.write_text(
+                json.dumps(rag_entries, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            log.info("Pitfalls RAG store updated (%d entries).", len(rag_entries))
+        except Exception:
+            import traceback
+            log.error("RAG build failed (pitfalls.md was still updated):\n%s",
+                      traceback.format_exc())
+
+        if PITFALLS_RAW_PATH.exists():
+            PITFALLS_RAW_PATH.unlink()
+        log.info("Pitfalls distilled and raw log cleared.")
+    except Exception:
+        import traceback
+        logging.getLogger(__name__).error(
+            "Pitfalls distillation failed:\n%s", traceback.format_exc()
+        )
+    finally:
+        _distill_in_progress.clear()
 
 
 def _log_pitfall(entry: dict) -> None:
@@ -72,8 +165,34 @@ def _log_pitfall(entry: dict) -> None:
         with PITFALLS_RAW_PATH.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
 
+    if _raw_pitfall_count() >= PITFALLS_DISTILL_THRESHOLD:
+        threading.Thread(
+            target=_distill_pitfalls_background, daemon=True
+        ).start()
+
+
+def _detect_active_dataset() -> tuple[str, str]:
+    """Detect active dataset from existing views in the schema."""
+    with connect() as con, con.cursor() as cur:
+        cur.execute(
+            "SELECT table_name FROM information_schema.views "
+            "WHERE table_schema = %s ORDER BY table_name",
+            (LIVE_SCHEMA,),
+        )
+        views = [r[0] for r in cur.fetchall()]
+    if "superstore" in views:
+        return "superstore", "superstore"
+    if "salesforce" in views:
+        return "salesforce", "salesforce"
+    # Manifest datasets use analytics or analytics_<name>
+    for v in views:
+        if v.startswith("analytics"):
+            return "manifest", v
+    return "salesforce", "salesforce"
+
 
 def _ensure_seeded() -> None:
+    global _active_dataset, _active_view
     with connect() as con, con.cursor() as cur:
         cur.execute(
             "SELECT 1 FROM information_schema.tables "
@@ -82,8 +201,14 @@ def _ensure_seeded() -> None:
         )
         if cur.fetchone() is None:
             print("Seeding initial Salesforce-style dataset…")
+            _nuke_schema()
             a, o = seed_workspace()
+            _active_dataset = "salesforce"
+            _active_view = "salesforce"
             print(f"  {a} accounts, {o} opportunities")
+        else:
+            _active_dataset, _active_view = _detect_active_dataset()
+            print(f"Detected active dataset: {_active_dataset} (view: {_active_view})")
 
 
 _ensure_seeded()
@@ -126,7 +251,10 @@ class EventBus:
         with self._lock:
             subs = list(self._subscribers)
         for q in subs:
-            self._loop.call_soon_threadsafe(self._safe_put, q, payload)
+            try:
+                self._loop.call_soon_threadsafe(self._safe_put, q, payload)
+            except RuntimeError:
+                pass
 
     @staticmethod
     def _safe_put(q: asyncio.Queue, payload: dict) -> None:
@@ -201,7 +329,6 @@ async def sse_events(request: Request):
     )
 
 
-TABLEAU_VIEW = "analytics"
 
 
 def _list_tables(cur: psycopg.Cursor) -> list[str]:
@@ -283,6 +410,7 @@ def _total_rows(cur: psycopg.Cursor) -> int:
 
 class ChatRequest(BaseModel):
     message: str
+    model: str | None = None
 
 
 class ApplyRequest(BaseModel):
@@ -404,11 +532,46 @@ def clear_pitfalls_raw():
     return {"ok": True}
 
 
+@app.post("/api/pitfalls/distill")
+def distill_pitfalls_endpoint():
+    """Manually trigger pitfalls distillation (merges raw log into curated)."""
+    raw_count = _raw_pitfall_count()
+    if raw_count == 0:
+        return {"ok": True, "message": "No raw errors to distill.", "updated": False}
+    try:
+        updated = planner.distill_pitfalls()
+    except Exception as e:
+        raise HTTPException(500, f"Distillation failed: {e}")
+    if updated is None:
+        return {"ok": True, "message": "Nothing to distill.", "updated": False}
+
+    lines = updated.strip().splitlines()
+    if len(lines) > PITFALLS_MAX_LINES:
+        updated = "\n".join(lines[:PITFALLS_MAX_LINES]) + "\n"
+
+    PITFALLS_PATH.write_text(updated, encoding="utf-8")
+
+    rag_count = 0
+    try:
+        rag_entries = planner.build_pitfalls_rag()
+        PITFALLS_RAG_PATH.write_text(
+            json.dumps(rag_entries, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        rag_count = len(rag_entries)
+    except Exception:
+        pass
+
+    if PITFALLS_RAW_PATH.exists():
+        PITFALLS_RAW_PATH.unlink()
+    return {"ok": True, "updated": True, "raw_processed": raw_count, "rag_entries": rag_count}
+
+
 @app.get("/api/status")
 def status():
     with connect() as con, con.cursor() as cur:
         views = [v for v, _ in _list_views(cur)]
-        tableau_view = TABLEAU_VIEW if TABLEAU_VIEW in views else (views[0] if views else None)
+        tableau_view = _active_view if _active_view in views else (views[0] if views else None)
         tableau_view_cols = []
         tableau_view_rows = 0
         if tableau_view:
@@ -428,6 +591,7 @@ def status():
                 "schema": LIVE_SCHEMA,
                 "view": tableau_view,
             },
+            "active_dataset": _active_dataset,
             "tables": _list_tables(cur),
             "views": views,
             "tableau_view_columns": tableau_view_cols,
@@ -446,7 +610,12 @@ def chat(req: ChatRequest):
         sample = _sample_rows_text(cur)
     history = snapshots.list()
     try:
-        plan: Plan = planner.plan(req.message, schema, sample, history)
+        plan: Plan = planner.plan(
+            req.message, schema, sample, history,
+            active_view=_active_view,
+            active_dataset=_active_dataset,
+            model=req.model,
+        )
     except Exception as e:
         raise HTTPException(500, f"Planner failed: {e}")
     if plan.language not in ("sql", "python"):
@@ -551,12 +720,20 @@ def apply(req: ApplyRequest):
                         {"language": a.language, "code": a.code, "error": a.error}
                         for a in attempts
                     ]
+                    rag_context = lookup_pitfalls_rag(
+                        type(e).__name__, str(e)
+                    )
+                    retry_message = req.original_message
+                    if rag_context:
+                        retry_message += "\n" + rag_context
                     new_plan = planner.plan(
-                        req.original_message,
+                        retry_message,
                         schema_text,
                         sample,
                         history,
                         previous_attempts=previous,
+                        active_view=_active_view,
+                        active_dataset=_active_dataset,
                     )
                 except Exception as planner_err:
                     return ApplyResponse(
@@ -624,23 +801,30 @@ def rollback():
 
 @app.post("/api/reseed")
 def reseed(dataset: str = "salesforce"):
+    global _active_dataset, _active_view
     dataset = (dataset or "salesforce").lower()
     if dataset not in ("salesforce", "superstore"):
         raise HTTPException(400, f"Unknown dataset: {dataset!r}")
     with _apply_lock:
+        _nuke_schema()
         if dataset == "superstore":
             o, r, p = seed_superstore()
             summary = f"Reseeded Superstore ({o} orders, {r} returns, {p} people)"
             counts = {"orders": o, "returns": r, "people": p}
+            _active_dataset = "superstore"
+            _active_view = "superstore"
         else:
             a, o = seed_workspace()
             summary = f"Reseeded Salesforce ({a} accounts, {o} opportunities)"
             counts = {"accounts": a, "opportunities": o}
+            _active_dataset = "salesforce"
+            _active_view = "salesforce"
         snapshots.clear()
         with connect() as con, con.cursor() as cur:
             result = {
                 "ok": True,
                 "dataset": dataset,
+                "active_view": _active_view,
                 **counts,
                 "row_count": _total_rows(cur),
                 "schema": _schema_text(cur),
@@ -658,7 +842,9 @@ class ManifestLoadRequest(BaseModel):
 
 @app.post("/api/load-manifest")
 def load_manifest_endpoint(req: ManifestLoadRequest):
+    global _active_dataset, _active_view
     with _apply_lock:
+        _nuke_schema()
         try:
             info = load_manifest(req.folder)
         except FileNotFoundError as e:
@@ -667,16 +853,25 @@ def load_manifest_endpoint(req: ManifestLoadRequest):
             raise HTTPException(400, str(e))
         except Exception as e:
             raise HTTPException(500, f"{type(e).__name__}: {e}")
+        # Track the first view created by the manifest.
+        created_views = info.get("views", [])
+        if created_views:
+            # Views are stored as "schema.name" — extract just the name.
+            _active_view = created_views[0].split(".")[-1]
+        else:
+            _active_view = "analytics"
+        _active_dataset = info.get("dataset", "manifest")
         snapshots.clear()
         with connect() as con, con.cursor() as cur:
             result = {
                 "ok": True,
                 **info,
+                "active_view": _active_view,
                 "row_count": _total_rows(cur),
                 "schema": _schema_text(cur),
             }
         total_rows = sum(info["tables"].values())
-        view_count = len(info.get("views", []))
+        view_count = len(created_views)
         summary = (
             f"Loaded manifest '{info['dataset']}' "
             f"({len(info['tables'])} tables, {view_count} view{'s' if view_count != 1 else ''}, "

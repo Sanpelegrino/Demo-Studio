@@ -15,18 +15,20 @@ from dotenv import load_dotenv
 from psycopg import sql
 
 
-XLS_PATH = Path(
+_DEFAULT_XLS_PATH = Path(
     r"C:\Users\andrew.hill\Documents\My Tableau Repository"
     r"\Datasources\2026.1\en_US-US\Sample - Superstore.xls"
 )
+
+XLS_PATH = Path(os.environ["SUPERSTORE_XLS_PATH"]) if "SUPERSTORE_XLS_PATH" in os.environ else _DEFAULT_XLS_PATH
 
 
 def _conn_kwargs() -> dict:
     return {
         "host": os.environ.get("PGHOST", "127.0.0.1"),
         "port": int(os.environ.get("PGPORT", "5432")),
-        "user": os.environ.get("PGUSER", "pulse_app"),
-        "password": os.environ.get("PGPASSWORD", "pulse_local_dev"),
+        "user": os.environ.get("PGUSER", "demo_studio"),
+        "password": os.environ.get("PGPASSWORD", "demo_local_dev"),
         "dbname": os.environ.get("PGDATABASE", "demo_studio"),
     }
 
@@ -63,6 +65,11 @@ def _snake(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def seed_superstore() -> tuple[int, int, int]:
+    if not XLS_PATH.exists():
+        raise FileNotFoundError(
+            f"Superstore XLS not found at {XLS_PATH}. "
+            "Set SUPERSTORE_XLS_PATH env var to the correct location."
+        )
     schema = os.environ.get("PGSCHEMA", "demo")
 
     xls = pd.ExcelFile(XLS_PATH)
@@ -76,8 +83,8 @@ def seed_superstore() -> tuple[int, int, int]:
     with psycopg.connect(**_conn_kwargs()) as con:
         con.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema)))
         # Drop existing demo objects so Tableau lands on the Superstore shape.
-        con.execute(sql.SQL("DROP VIEW IF EXISTS {}.analytics CASCADE").format(sql.Identifier(schema)))
-        for t in ("opportunities", "accounts", "orders", "returns", "people"):
+        # Tables are created fresh — caller is responsible for wiping schema first.
+        for t in ("orders", "returns", "people"):
             con.execute(sql.SQL("DROP TABLE IF EXISTS {}.{} CASCADE").format(
                 sql.Identifier(schema), sql.Identifier(t)
             ))
@@ -157,7 +164,7 @@ def seed_superstore() -> tuple[int, int, int]:
             )
 
         con.execute(sql.SQL("""
-            CREATE OR REPLACE VIEW {schema}.analytics AS
+            CREATE OR REPLACE VIEW {schema}.superstore AS
             SELECT
                 o.row_id,
                 o.order_id,

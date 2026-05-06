@@ -10,6 +10,8 @@ without restarting the server.
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -18,26 +20,30 @@ from typing import List
 
 import httpx
 
+log = logging.getLogger(__name__)
 
 PITFALLS_PATH = Path(__file__).parent / "prompts" / "pitfalls.md"
+PITFALLS_RAW_PATH = Path(__file__).parent / "prompts" / "pitfalls_raw.jsonl"
+PITFALLS_DISTILL_PROMPT_PATH = Path(__file__).parent / "prompts" / "pitfalls_distill_prompt.md"
+PITFALLS_RAG_PATH = Path(__file__).parent / "prompts" / "pitfalls_rag.json"
+PITFALLS_RAG_PROMPT_PATH = Path(__file__).parent / "prompts" / "pitfalls_rag_prompt.md"
 
 
-SYSTEM_PROMPT = """You are the data mutation engine for a synthetic Salesforce-style
-analytics workspace running on PostgreSQL. Your work directly shapes
+SYSTEM_PROMPT_TEMPLATE = """You are the data mutation engine for Demo Studio,
+a Postgres-backed dataset builder for Tableau. Your work directly shapes
 what the user sees in their Tableau dashboard, so treat every request
 as a chance to deliver a thorough, realistic, production-quality
 result — interpret requests generously, think through second-order
 effects on the view and related tables, and don't stop at the bare
 minimum that technically satisfies the ask.
 
-The user is building a Tableau dashboard. Tableau connects to a single
-view — `demo.analytics` — NOT the underlying tables. You may freely
-reshape the tables beneath, but you MUST keep the view in sync so the
-dashboard stays useful.
+The user is building a Tableau dashboard. Tableau connects to the view
+`demo.{view_name}` — NOT the underlying tables. You may freely reshape
+the tables beneath, but you MUST keep the view in sync so the dashboard
+stays useful.
 
-The `demo` schema currently holds tables like `demo.accounts` and
-`demo.opportunities`, plus the view `demo.analytics`. You'll see the
-exact current schema (including the view definition) in every request.
+The active dataset is "{dataset_name}". You'll see the exact current
+schema (including all view definitions) in every request.
 
 RESPONSE FORMAT (strict):
 Return exactly these four blocks, in this order, and nothing else:
@@ -58,15 +64,15 @@ CODE:
 Rules for the code:
 
 VIEW CONTRACT (critical):
-- Tableau reads from `demo.analytics`. After any DDL that affects a
+- Tableau reads from `demo.{view_name}`. After any DDL that affects a
   column the view references, you MUST redefine the view so it still
   compiles and reflects the change the user asked for.
 - ALWAYS use this pattern to rebuild the view — never use
   `CREATE OR REPLACE VIEW`:
 
-      DROP VIEW IF EXISTS demo.analytics CASCADE;
-      CREATE VIEW demo.analytics AS
-      SELECT ... FROM demo.opportunities o JOIN demo.accounts a ...;
+      DROP VIEW IF EXISTS demo.{view_name} CASCADE;
+      CREATE VIEW demo.{view_name} AS
+      SELECT ... FROM ...;
 
   Reason: `CREATE OR REPLACE VIEW` in Postgres only allows appending
   new columns at the end; inserting a column in the middle or changing
@@ -80,7 +86,7 @@ VIEW CONTRACT (critical):
 - When the user asks to hide/remove a field from Tableau, it's usually
   enough to remove it from the view's SELECT list — you don't have to
   drop the underlying column unless asked.
-- Never drop `demo.analytics` without recreating it in the same script.
+- Never drop `demo.{view_name}` without recreating it in the same script.
 
 DATA / SCHEMA FREEDOM:
 - The user wants freedom to ADD, DROP, and RENAME columns and tables.
@@ -116,13 +122,13 @@ PYTHON:
     `pl`      : polars
     `schema`  : the live schema name (usually "demo")
   You also get the standard library: `random`, `datetime`, `math`, etc.
-- Read with `pd.read_sql('SELECT ... FROM demo.accounts', con)` or
+- Read with `pd.read_sql('SELECT ... FROM demo.<table>', con)` or
   `cur.execute(...)`. Write with `cur.execute` / `cur.executemany` /
   psycopg's `copy` API.
 - Do NOT call `con.commit()` or `con.rollback()` — the harness handles
   transaction boundaries.
 - If your Python changes table schemas, you still must rebuild
-  `demo.analytics` at the end.
+  `demo.{view_name}` at the end.
 
 CHOOSING:
 - Use Python by default whenever the task generates new rows,
@@ -139,6 +145,57 @@ CHOOSING:
 SAFETY:
 - Only touch the `demo` and `public` schemas. Never read from the
   filesystem. Never call external network APIs."""
+
+
+def _load_rag_entries() -> list[dict]:
+    """Load the pitfalls RAG store. Returns empty list if missing."""
+    if not PITFALLS_RAG_PATH.exists():
+        return []
+    try:
+        return json.loads(PITFALLS_RAG_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        return []
+
+
+def lookup_pitfalls_rag(error_type: str, error_message: str, max_results: int = 3) -> str:
+    """Find RAG entries matching an error and format them for injection into a retry prompt."""
+    entries = _load_rag_entries()
+    if not entries:
+        return ""
+
+    query_tokens = set()
+    query_tokens.add(error_type.lower())
+    for word in re.split(r'[\s:,."\'()\-]+', error_message.lower()):
+        if len(word) >= 3:
+            query_tokens.add(word)
+
+    scored: list[tuple[int, dict]] = []
+    for entry in entries:
+        entry_keywords = {k.lower() for k in entry.get("keywords", [])}
+        hits = len(query_tokens & entry_keywords)
+        if hits > 0:
+            scored.append((hits, entry))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [entry for _, entry in scored[:max_results]]
+    if not top:
+        return ""
+
+    blocks = []
+    for e in top:
+        block = (
+            f"### {e['error_pattern']}\n"
+            f"Root cause: {e['root_cause']}\n"
+            f"Fix strategy: {e['fix_strategy']}"
+        )
+        if e.get("example_good"):
+            block += f"\nCorrect approach:\n{e['example_good']}"
+        blocks.append(block)
+
+    return (
+        "\nKNOWN ERROR PLAYBOOKS — these entries match the error you just hit. "
+        "Use them to guide your fix:\n\n" + "\n\n".join(blocks) + "\n"
+    )
 
 
 def _load_pitfalls() -> str:
@@ -180,6 +237,9 @@ class Planner:
         sample_rows: str,
         history: List[dict],
         previous_attempts: List[dict] | None = None,
+        active_view: str = "salesforce",
+        active_dataset: str = "salesforce",
+        model: str | None = None,
     ) -> Plan:
         history_text = "\n".join(
             f"- ({h['language']}) {h['summary']}" for h in history[-10:]
@@ -216,7 +276,10 @@ User request:
                 + "\n"
             )
 
-        system_prompt = SYSTEM_PROMPT
+        system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+            view_name=active_view,
+            dataset_name=active_dataset,
+        )
         pitfalls = _load_pitfalls()
         if pitfalls:
             system_prompt += (
@@ -224,7 +287,8 @@ User request:
                 "read carefully and avoid):\n" + pitfalls
             )
 
-        url = f"{self.base_url}/model/{self.model}/invoke"
+        effective_model = model or self.model
+        url = f"{self.base_url}/model/{effective_model}/invoke"
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": 8192,
@@ -256,6 +320,103 @@ User request:
             )
 
         return _parse_plan(raw)
+
+    def distill_pitfalls(self) -> str | None:
+        """Call Claude to merge raw error log into curated pitfalls.md.
+
+        Returns the updated pitfalls markdown, or None if there's nothing
+        to distill. Raises on gateway errors so callers can log failures.
+        """
+        if not PITFALLS_RAW_PATH.exists():
+            return None
+        raw_text = PITFALLS_RAW_PATH.read_text(encoding="utf-8").strip()
+        if not raw_text:
+            return None
+
+        curated = ""
+        if PITFALLS_PATH.exists():
+            curated = PITFALLS_PATH.read_text(encoding="utf-8")
+
+        distill_prompt = PITFALLS_DISTILL_PROMPT_PATH.read_text(encoding="utf-8")
+
+        user_content = (
+            "CURRENT CURATED PITFALLS:\n"
+            "```\n" + curated + "\n```\n\n"
+            "RAW ERROR LOG:\n"
+            "```\n" + raw_text + "\n```"
+        )
+
+        url = f"{self.base_url}/model/{self.model}/invoke"
+        payload = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 4096,
+            "system": distill_prompt,
+            "messages": [{"role": "user", "content": user_content}],
+        }
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        resp = self.client.post(url, headers=headers, json=payload)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Gateway {resp.status_code}: {resp.text[:500]}")
+        body = resp.json()
+        content = body.get("content", [])
+        result = "".join(
+            b.get("text", "") for b in content if b.get("type") == "text"
+        ).strip()
+        if not result:
+            raise RuntimeError(f"Empty distill response: {body}")
+        return result
+
+    def build_pitfalls_rag(self) -> list[dict]:
+        """Call Claude to build/update the detailed RAG store from raw errors.
+
+        Returns the full list of RAG entries. Raises on gateway errors.
+        """
+        if not PITFALLS_RAW_PATH.exists():
+            return _load_rag_entries()
+        raw_text = PITFALLS_RAW_PATH.read_text(encoding="utf-8").strip()
+        if not raw_text:
+            return _load_rag_entries()
+
+        existing = _load_rag_entries()
+        existing_json = json.dumps(existing, indent=2) if existing else "[]"
+
+        rag_prompt = PITFALLS_RAG_PROMPT_PATH.read_text(encoding="utf-8")
+
+        user_content = (
+            "EXISTING RAG ENTRIES:\n"
+            "```\n" + existing_json + "\n```\n\n"
+            "RAW ERROR LOG:\n"
+            "```\n" + raw_text + "\n```"
+        )
+
+        url = f"{self.base_url}/model/{self.model}/invoke"
+        payload = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 8192,
+            "system": rag_prompt,
+            "messages": [{"role": "user", "content": user_content}],
+        }
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        resp = self.client.post(url, headers=headers, json=payload)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Gateway {resp.status_code}: {resp.text[:500]}")
+        body = resp.json()
+        content = body.get("content", [])
+        result = "".join(
+            b.get("text", "") for b in content if b.get("type") == "text"
+        ).strip()
+        if not result:
+            raise RuntimeError(f"Empty RAG build response: {body}")
+
+        return json.loads(result)
 
 
 def _parse_plan(text: str) -> Plan:

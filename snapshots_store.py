@@ -5,11 +5,10 @@ Each snapshot copies every table in the live schema into
 and rebuilds them from the snapshot.
 
 History metadata (id, summary, timestamp, language, code) is kept in
-`snapshots.__history`.
+`snapshots.history`.
 """
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass
 from typing import List, Optional
@@ -19,7 +18,7 @@ from psycopg import sql
 
 
 SNAPSHOT_SCHEMA = "snapshots"
-HISTORY_TABLE = "__history"
+HISTORY_TABLE = "history"
 
 
 @dataclass
@@ -64,6 +63,10 @@ class SnapshotStore:
                 schema=sql.Identifier(SNAPSHOT_SCHEMA),
                 table=sql.Identifier(HISTORY_TABLE),
             ))
+            # Migrate: drop old __history if it exists.
+            cur.execute(sql.SQL("""
+                DROP TABLE IF EXISTS {schema}."__history"
+            """).format(schema=sql.Identifier(SNAPSHOT_SCHEMA)))
             con.commit()
 
     def _live_tables(self, cur: psycopg.Cursor) -> List[str]:

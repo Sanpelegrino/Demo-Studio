@@ -237,7 +237,7 @@ class Planner:
         sample_rows: str,
         history: List[dict],
         previous_attempts: List[dict] | None = None,
-        active_view: str = "salesforce",
+        active_view: str = "_view_salesforce",
         active_dataset: str = "salesforce",
         model: str | None = None,
     ) -> Plan:

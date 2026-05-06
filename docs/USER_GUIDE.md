@@ -61,13 +61,11 @@ Features in embed mode:
 - **Autorun** toggle — same as the main UI.
 - History is intentionally omitted to keep the extension minimal.
 
-## Pitfalls system
+## Self-improving error handling
 
 The agent learns from its mistakes. Every failed execution is logged. After 5 failures accumulate, the system automatically:
 
 1. Distills the errors into concise "Don't do X, Do Y" guidance (appended to the agent's system prompt).
 2. Builds a detailed RAG knowledge base with root causes, fix strategies, and example code.
 
-On retry, the agent receives targeted playbooks matching the specific error it hit — drawn from the RAG store rather than the lean system prompt rules.
-
-You can also manually edit the pitfalls via the **Pitfalls** panel at the bottom of the main page.
+On retry, the agent receives targeted playbooks matching the specific error it hit — drawn from the RAG store rather than the lean system prompt rules. This process is fully automatic and requires no user intervention.

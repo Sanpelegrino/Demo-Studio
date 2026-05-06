@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import threading
 import time
@@ -29,6 +30,10 @@ from pydantic import BaseModel
 from planner import PITFALLS_RAG_PATH, Plan, Planner, lookup_pitfalls_rag
 from seed import seed as seed_workspace
 from seed_manifest import load_manifest
+from manifest_builder import (
+    Scenario, JoinDef, detect_scenario, inspect_tables,
+    generate_manifest, write_manifest, prepare_csvs,
+)
 from seed_superstore import seed_superstore
 from snapshots_store import SnapshotStore
 
@@ -42,13 +47,17 @@ PITFALLS_RAW_PATH = PROMPTS_DIR / "pitfalls_raw.jsonl"
 DATASETS_DIR.mkdir(exist_ok=True)
 PROMPTS_DIR.mkdir(exist_ok=True)
 
+MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB per file
+MAX_EXTRACT_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB total decompressed
+ALLOWED_EXTENSIONS = {".zip", ".csv", ".xls", ".xlsx", ".json"}
+
 load_dotenv(BASE_DIR / ".env")
 
 LIVE_SCHEMA = os.environ.get("PGSCHEMA", "demo")
 
 # Active dataset state — tracks which dataset/view the LLM should maintain.
-_active_dataset: str = "salesforce"
-_active_view: str = "salesforce"
+_active_dataset: str = "superstore"
+_active_view: str = "_view_superstore"
 
 
 def _conn_kwargs() -> dict:
@@ -68,29 +77,12 @@ def connect() -> psycopg.Connection:
 def _nuke_schema() -> None:
     """Drop ALL views and tables in the live schema. Guaranteed clean slate."""
     with connect() as con, con.cursor() as cur:
-        cur.execute(
-            "SELECT table_name FROM information_schema.views "
-            "WHERE table_schema = %s", (LIVE_SCHEMA,)
-        )
-        for (name,) in cur.fetchall():
-            cur.execute(
-                psycopg.sql.SQL("DROP VIEW IF EXISTS {}.{} CASCADE").format(
-                    psycopg.sql.Identifier(LIVE_SCHEMA),
-                    psycopg.sql.Identifier(name),
-                )
-            )
-        cur.execute(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = %s AND table_type = 'BASE TABLE'",
-            (LIVE_SCHEMA,)
-        )
-        for (name,) in cur.fetchall():
-            cur.execute(
-                psycopg.sql.SQL("DROP TABLE IF EXISTS {}.{} CASCADE").format(
-                    psycopg.sql.Identifier(LIVE_SCHEMA),
-                    psycopg.sql.Identifier(name),
-                )
-            )
+        cur.execute(psycopg.sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+            psycopg.sql.Identifier(LIVE_SCHEMA),
+        ))
+        cur.execute(psycopg.sql.SQL("CREATE SCHEMA {}").format(
+            psycopg.sql.Identifier(LIVE_SCHEMA),
+        ))
         con.commit()
 
 
@@ -180,15 +172,39 @@ def _detect_active_dataset() -> tuple[str, str]:
             (LIVE_SCHEMA,),
         )
         views = [r[0] for r in cur.fetchall()]
-    if "superstore" in views:
-        return "superstore", "superstore"
-    if "salesforce" in views:
-        return "salesforce", "salesforce"
-    # Manifest datasets use analytics or analytics_<name>
+    if "_view_superstore" in views:
+        return "superstore", "_view_superstore"
+    if "_view_salesforce" in views:
+        return "salesforce", "_view_salesforce"
+    # Manifest datasets create a view prefixed with _view_.
+    # Use the first _view_ prefixed view found.
     for v in views:
-        if v.startswith("analytics"):
-            return "manifest", v
-    return "salesforce", "salesforce"
+        if v.startswith("_view_"):
+            return v[6:], v
+    return "salesforce", "_view_salesforce"
+
+
+def _migrate_view_names() -> None:
+    """Rename old views (superstore, salesforce, etc.) to _view_ prefixed names."""
+    with connect() as con, con.cursor() as cur:
+        cur.execute(
+            "SELECT table_name FROM information_schema.views "
+            "WHERE table_schema = %s ORDER BY table_name",
+            (LIVE_SCHEMA,),
+        )
+        views = [r[0] for r in cur.fetchall()]
+        for v in views:
+            if not v.startswith("_view_"):
+                new_name = f"_view_{v}"
+                cur.execute(
+                    psycopg.sql.SQL("ALTER VIEW {}.{} RENAME TO {}").format(
+                        psycopg.sql.Identifier(LIVE_SCHEMA),
+                        psycopg.sql.Identifier(v),
+                        psycopg.sql.Identifier(new_name),
+                    )
+                )
+                logging.info("Migrated view: %s → %s", v, new_name)
+        con.commit()
 
 
 def _ensure_seeded() -> None:
@@ -200,15 +216,16 @@ def _ensure_seeded() -> None:
             (LIVE_SCHEMA,),
         )
         if cur.fetchone() is None:
-            print("Seeding initial Salesforce-style dataset…")
+            logging.info("Seeding initial Superstore dataset…")
             _nuke_schema()
-            a, o = seed_workspace()
-            _active_dataset = "salesforce"
-            _active_view = "salesforce"
-            print(f"  {a} accounts, {o} opportunities")
+            o, r, p = seed_superstore()
+            _active_dataset = "superstore"
+            _active_view = "_view_superstore"
+            logging.info("  %d orders, %d returns, %d people", o, r, p)
         else:
+            _migrate_view_names()
             _active_dataset, _active_view = _detect_active_dataset()
-            print(f"Detected active dataset: {_active_dataset} (view: {_active_view})")
+            logging.info("Detected active dataset: %s (view: %s)", _active_dataset, _active_view)
 
 
 _ensure_seeded()
@@ -812,13 +829,13 @@ def reseed(dataset: str = "salesforce"):
             summary = f"Reseeded Superstore ({o} orders, {r} returns, {p} people)"
             counts = {"orders": o, "returns": r, "people": p}
             _active_dataset = "superstore"
-            _active_view = "superstore"
+            _active_view = "_view_superstore"
         else:
             a, o = seed_workspace()
             summary = f"Reseeded Salesforce ({a} accounts, {o} opportunities)"
             counts = {"accounts": a, "opportunities": o}
             _active_dataset = "salesforce"
-            _active_view = "salesforce"
+            _active_view = "_view_salesforce"
         snapshots.clear()
         with connect() as con, con.cursor() as cur:
             result = {
@@ -836,6 +853,168 @@ def reseed(dataset: str = "salesforce"):
         return result
 
 
+class DatasetSaveRequest(BaseModel):
+    name: str
+
+
+@app.post("/api/datasets/save")
+def save_dataset(req: DatasetSaveRequest):
+    """Export the current Postgres state as a reloadable dataset folder."""
+    name = re.sub(r"[^a-zA-Z0-9 _\-]", "", req.name.strip())[:128]
+    if not name:
+        raise HTTPException(400, "Invalid dataset name.")
+    dest = DATASETS_DIR / name
+    if not dest.resolve().is_relative_to(DATASETS_DIR.resolve()):
+        raise HTTPException(400, "Invalid dataset name.")
+
+    with connect() as con, con.cursor() as cur:
+        tables = _list_tables(cur)
+        if not tables:
+            raise HTTPException(400, "No tables in workspace to save.")
+
+        views = _list_views(cur)
+
+        # Export each table as CSV.
+        dest.mkdir(parents=True, exist_ok=True)
+        table_meta = []
+        for t in tables:
+            cur.execute(f'SELECT * FROM "{LIVE_SCHEMA}"."{t}"')
+            cols = [d.name for d in cur.description]
+            rows = cur.fetchall()
+            df = pd.DataFrame(rows, columns=cols)
+            df.to_csv(dest / f"{t}.csv", index=False)
+
+            cur.execute(f'SELECT COUNT(*) FROM "{LIVE_SCHEMA}"."{t}"')
+            count = cur.fetchone()[0]
+
+            # Determine table role from naming convention or view membership.
+            role = "dimension"
+            lower_t = t.lower()
+            if lower_t.startswith("fact") or lower_t in ("orders", "opportunities", "returns"):
+                role = "fact"
+            table_meta.append({
+                "tableName": t,
+                "tableRole": role,
+                "grain": f"One row per {t} record",
+                "primaryKey": [cols[0]] if cols else [],
+            })
+
+        # If no table was marked as fact, mark the first view's FROM table as fact.
+        fact_count = sum(1 for tm in table_meta if tm["tableRole"] == "fact")
+        if fact_count == 0 and views:
+            fact_table = _extract_fact_from_view(views[0][1])
+            if fact_table:
+                for tm in table_meta:
+                    if tm["tableName"] == fact_table:
+                        tm["tableRole"] = "fact"
+                        break
+
+        # If still no fact, just mark the largest table.
+        fact_count = sum(1 for tm in table_meta if tm["tableRole"] == "fact")
+        if fact_count == 0 and table_meta:
+            largest = max(table_meta, key=lambda tm: (dest / f"{tm['tableName']}.csv").stat().st_size)
+            largest["tableRole"] = "fact"
+
+        # Reverse-engineer join paths from view definitions.
+        join_paths = []
+        for _, vdef in views:
+            join_paths.extend(_extract_joins_from_view(vdef, tables))
+
+        # Deduplicate joins.
+        seen = set()
+        unique_joins = []
+        for jp in join_paths:
+            key = (jp["fromTable"], jp["fromField"], jp["toTable"], jp["toField"])
+            if key not in seen:
+                seen.add(key)
+                unique_joins.append(jp)
+
+        manifest = {
+            "schemaVersion": "JUJU_RELATIONAL_SCHEMA_MANIFEST_V1",
+            "datasetName": name,
+            "tables": table_meta,
+            "joinPaths": unique_joins,
+        }
+        (dest / "manifest.json").write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    return {"ok": True, "name": name, "folder": str(dest), "tables": len(tables)}
+
+
+@app.delete("/api/datasets/delete")
+def delete_dataset():
+    global _active_dataset, _active_view
+    with _apply_lock:
+        dest = DATASETS_DIR / _active_dataset
+        if dest.is_dir() and dest.resolve().is_relative_to(DATASETS_DIR.resolve()):
+            shutil.rmtree(dest)
+        _nuke_schema()
+        snapshots.clear()
+        seed_superstore()
+        _active_dataset = "superstore"
+        _active_view = "_view_superstore"
+        return {"ok": True, "dataset": "superstore"}
+
+
+def _extract_fact_from_view(view_def: str | None) -> str | None:
+    """Extract the primary FROM table from a view definition."""
+    if not view_def:
+        return None
+    match = re.search(r'\bFROM\s+\(*(?:\w+\.)?(\w+)\s+(\w+)', view_def, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _extract_joins_from_view(view_def: str | None, tables: list[str]) -> list[dict]:
+    """Parse LEFT JOIN ... ON clauses from a view definition to recover join paths."""
+    if not view_def:
+        return []
+    joins = []
+    pattern = re.compile(
+        r'JOIN\s+(?:\w+\.)?(\w+)\s+(\w+)\s+ON\s+\(?'
+        r'\(?(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)\)?\)?',
+        re.IGNORECASE,
+    )
+    alias_map: dict[str, str] = {}
+    from_match = re.search(
+        r'\bFROM\s+\(*(?:\w+\.)?(\w+)\s+(\w+)',
+        view_def, re.IGNORECASE,
+    )
+    if from_match:
+        alias_map[from_match.group(2)] = from_match.group(1)
+
+    for m in pattern.finditer(view_def):
+        to_table = m.group(1)
+        to_alias = m.group(2)
+        alias_map[to_alias] = to_table
+
+        lhs_alias = m.group(3)
+        lhs_col = m.group(4)
+        rhs_alias = m.group(5)
+        rhs_col = m.group(6)
+
+        if lhs_alias == to_alias:
+            from_table = alias_map.get(rhs_alias, rhs_alias)
+            joins.append({
+                "fromTable": from_table,
+                "fromField": rhs_col,
+                "toTable": to_table,
+                "toField": lhs_col,
+            })
+        else:
+            from_table = alias_map.get(lhs_alias, lhs_alias)
+            joins.append({
+                "fromTable": from_table,
+                "fromField": lhs_col,
+                "toTable": to_table,
+                "toField": rhs_col,
+            })
+    return joins
+
+
 class ManifestLoadRequest(BaseModel):
     folder: str
 
@@ -843,7 +1022,11 @@ class ManifestLoadRequest(BaseModel):
 @app.post("/api/load-manifest")
 def load_manifest_endpoint(req: ManifestLoadRequest):
     global _active_dataset, _active_view
+    folder_path = Path(req.folder).resolve()
+    if not folder_path.is_relative_to(DATASETS_DIR.resolve()):
+        raise HTTPException(400, "Invalid folder path.")
     with _apply_lock:
+        _check_multi_fact(folder_path)
         _nuke_schema()
         try:
             info = load_manifest(req.folder)
@@ -895,44 +1078,342 @@ def list_datasets():
     return {"datasets": results}
 
 
+def _find_dataset_folder(dataset_name: str) -> Path | None:
+    """Find the dataset folder by name (checks folder name and manifest datasetName)."""
+    if not DATASETS_DIR.is_dir():
+        return None
+    # Try exact folder name match first.
+    direct = DATASETS_DIR / dataset_name
+    if direct.is_dir() and (direct / "manifest.json").exists():
+        return direct
+    # Scan for a manifest with matching datasetName.
+    for p in DATASETS_DIR.iterdir():
+        if not p.is_dir():
+            continue
+        manifest_path = p / "manifest.json"
+        if manifest_path.exists():
+            try:
+                m = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if m.get("datasetName") == dataset_name:
+                    return p
+            except (json.JSONDecodeError, OSError):
+                continue
+    return None
+
+
+class DatasetRenameRequest(BaseModel):
+    new_name: str
+    folder: str | None = None
+
+
+@app.patch("/api/datasets/rename")
+def rename_dataset(req: DatasetRenameRequest):
+    """Rename the active dataset: update manifest datasetName, rename folder, rename Postgres view."""
+    global _active_dataset, _active_view
+
+    new_name = re.sub(r"[^a-zA-Z0-9 _\-]", "", req.new_name.strip())[:128]
+    if not new_name:
+        raise HTTPException(400, "Invalid dataset name.")
+
+    # Find the dataset folder — use provided folder or search by active dataset name.
+    if req.folder:
+        src = Path(req.folder).resolve()
+    else:
+        src = _find_dataset_folder(_active_dataset)
+    if src is None or not src.is_dir():
+        raise HTTPException(404, "Dataset folder not found.")
+    if not src.is_relative_to(DATASETS_DIR.resolve()):
+        raise HTTPException(400, "Invalid folder path.")
+
+    # Update manifest.json datasetName
+    manifest_path = src / "manifest.json"
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        old_dataset_name = manifest.get("datasetName", src.name)
+        manifest["datasetName"] = new_name
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    else:
+        old_dataset_name = src.name
+
+    # Rename the folder on disk
+    dest = DATASETS_DIR / new_name
+    if not dest.resolve().is_relative_to(DATASETS_DIR.resolve()):
+        raise HTTPException(400, "Invalid new name.")
+    if dest.exists() and dest != src:
+        raise HTTPException(409, f"A dataset named '{new_name}' already exists.")
+    if dest != src:
+        src.rename(dest)
+
+    # If this is the active dataset, rename the Postgres view too
+    view_renamed = False
+    if _active_dataset == old_dataset_name or _active_dataset == src.name:
+        from seed_manifest import _ident
+        old_view = _active_view
+        new_view = f"_view_{_ident(new_name)}"
+        if old_view != new_view:
+            with connect() as con, con.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM information_schema.views "
+                    "WHERE table_schema = %s AND table_name = %s",
+                    (LIVE_SCHEMA, old_view),
+                )
+                if cur.fetchone():
+                    cur.execute(
+                        psycopg.sql.SQL("ALTER VIEW {}.{} RENAME TO {}").format(
+                            psycopg.sql.Identifier(LIVE_SCHEMA),
+                            psycopg.sql.Identifier(old_view),
+                            psycopg.sql.Identifier(new_view),
+                        )
+                    )
+                    con.commit()
+                    view_renamed = True
+        _active_dataset = new_name
+        _active_view = new_view
+
+    return {
+        "ok": True,
+        "name": new_name,
+        "folder": str(dest),
+        "view_renamed": view_renamed,
+    }
+
+
+def _check_multi_fact(folder: Path) -> None:
+    """Reject manifests with multiple fact tables (not yet supported)."""
+    manifest_path = folder / "manifest.json"
+    if not manifest_path.exists():
+        return
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    fact_count = sum(1 for t in manifest.get("tables", []) if t.get("tableRole") == "fact")
+    if fact_count > 1:
+        raise HTTPException(400, "Multi-fact datasets are not currently supported.")
+
+
+def _best_dataset_name(folder_name: str, tables: list) -> str:
+    """Pick the best dataset name for multi-file/sheet uploads.
+
+    Uses the table with the most rows as the name source, falling back to folder name.
+    """
+    if not tables:
+        return folder_name
+    largest = max(tables, key=lambda t: t.row_count)
+    return largest.name if largest.name else folder_name
+
+
+def _load_and_respond(dest: Path, name: str) -> dict:
+    """Nuke schema, load manifest, update globals, and return the standard response dict."""
+    global _active_dataset, _active_view
+    _check_multi_fact(dest)
+    _nuke_schema()
+    try:
+        info = load_manifest(dest)
+    except Exception as e:
+        raise HTTPException(500, f"{type(e).__name__}: {e}")
+    created_views = info.get("views", [])
+    _active_view = created_views[0].split(".")[-1] if created_views else "analytics"
+    _active_dataset = info.get("dataset", name)
+    snapshots.clear()
+    with connect() as con, con.cursor() as cur:
+        return {
+            "ok": True, "loaded": True, "name": name, "folder": str(dest),
+            "dataset": info["dataset"], "tables": info["tables"],
+            "views": info["views"], "active_view": _active_view,
+            "row_count": _total_rows(cur), "schema": _schema_text(cur),
+        }
+
+
 @app.post("/api/datasets/upload")
-async def upload_dataset(file: UploadFile = File(...)):
-    """Accept a .zip, extract into datasets/<stem>/, return the folder path."""
-    if not file.filename or not file.filename.lower().endswith(".zip"):
-        raise HTTPException(400, "Upload must be a .zip file.")
-    stem = Path(file.filename).stem
-    dest = DATASETS_DIR / stem
-    # If already exists, remove so we get a clean replacement.
+async def upload_dataset(
+    file: UploadFile | None = File(None),
+    files: list[UploadFile] = File([]),
+):
+    """Accept file(s), extract/write into datasets/<name>/, detect scenario and load or return config needs."""
+    global _active_dataset, _active_view
+
+    all_files: list[UploadFile] = []
+    if file is not None:
+        all_files.append(file)
+    all_files.extend(files)
+    all_files = [f for f in all_files if f.filename]
+
+    if not all_files:
+        raise HTTPException(400, "No files uploaded.")
+
+    first_file = all_files[0]
+    first_filename = first_file.filename or ""
+    if "/" in first_filename:
+        # Folder upload — use the top-level folder name
+        raw_name = first_filename.split("/")[0]
+    elif len(all_files) == 1 and Path(first_filename).suffix.lower() == ".zip":
+        # Single zip — use zip filename stem
+        raw_name = Path(first_filename).stem
+    elif len(all_files) == 1:
+        # Single file — use file stem
+        raw_name = Path(first_filename).stem
+    else:
+        # Multiple loose files — use first file stem (will be refined later)
+        raw_name = Path(first_filename).stem
+    name = re.sub(r"[^a-zA-Z0-9 _\-]", "", raw_name)[:128]
+    if not name:
+        raise HTTPException(400, "Invalid dataset name derived from filename.")
+
+    dest = DATASETS_DIR / name
+    if not dest.resolve().is_relative_to(DATASETS_DIR.resolve()):
+        raise HTTPException(400, "Invalid dataset name.")
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
 
-    # Write the zip to a temp path then extract.
-    tmp_zip = DATASETS_DIR / f"_upload_{stem}.zip"
     try:
-        contents = await file.read()
-        tmp_zip.write_bytes(contents)
-        with zipfile.ZipFile(tmp_zip, "r") as zf:
-            zf.extractall(dest)
-        # Some zips nest everything inside a single root folder.
-        # If dest contains exactly one subfolder and no manifest.json
-        # at the top level, pull the subfolder contents up.
-        children = list(dest.iterdir())
-        if (
-            len(children) == 1
-            and children[0].is_dir()
-            and not (dest / "manifest.json").exists()
-        ):
-            nested = children[0]
-            for item in nested.iterdir():
-                item.rename(dest / item.name)
-            nested.rmdir()
-    finally:
-        if tmp_zip.exists():
-            tmp_zip.unlink()
+        for f in all_files:
+            fname = f.filename or "unknown"
+            basename = Path(fname).name
+            ext = Path(basename).suffix.lower()
+            if ext not in ALLOWED_EXTENSIONS:
+                raise HTTPException(400, f"File type not allowed: {ext}")
 
-    if not (dest / "manifest.json").exists():
+            contents = await f.read()
+            if len(contents) > MAX_UPLOAD_SIZE:
+                raise HTTPException(400, f"File too large: {basename} ({len(contents)} bytes exceeds {MAX_UPLOAD_SIZE} limit)")
+
+            if ext == ".zip":
+                tmp_zip = dest / f"_upload_{basename}"
+                try:
+                    tmp_zip.write_bytes(contents)
+                    with zipfile.ZipFile(tmp_zip, "r") as zf:
+                        total_declared = sum(zi.file_size for zi in zf.infolist())
+                        if total_declared > MAX_EXTRACT_SIZE:
+                            raise HTTPException(400, f"Zip decompressed size too large ({total_declared} bytes exceeds {MAX_EXTRACT_SIZE} limit)")
+                        dest_resolved = dest.resolve()
+                        for member in zf.namelist():
+                            target_path = (dest / member).resolve()
+                            if not target_path.is_relative_to(dest_resolved):
+                                raise HTTPException(400, f"Zip contains unsafe path: {member}")
+                        cumulative = 0
+                        for info in zf.infolist():
+                            if info.is_dir():
+                                (dest / info.filename).mkdir(parents=True, exist_ok=True)
+                                continue
+                            (dest / info.filename).parent.mkdir(parents=True, exist_ok=True)
+                            with zf.open(info) as src, open(dest / info.filename, "wb") as dst:
+                                while chunk := src.read(65536):
+                                    cumulative += len(chunk)
+                                    if cumulative > MAX_EXTRACT_SIZE:
+                                        raise HTTPException(400, "Zip decompressed size exceeds limit during extraction")
+                                    dst.write(chunk)
+                    children = [
+                        c for c in dest.iterdir()
+                        if c.name != f"_upload_{basename}"
+                    ]
+                    if (
+                        len(children) == 1
+                        and children[0].is_dir()
+                        and not (dest / "manifest.json").exists()
+                    ):
+                        nested = children[0]
+                        for item in nested.iterdir():
+                            item.rename(dest / item.name)
+                        nested.rmdir()
+                finally:
+                    if tmp_zip.exists():
+                        tmp_zip.unlink()
+            else:
+                (dest / basename).write_bytes(contents)
+    except HTTPException:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise
+
+    try:
+        scenario = detect_scenario(dest)
+    except ValueError as e:
         shutil.rmtree(dest)
-        raise HTTPException(400, "Zip does not contain a manifest.json.")
+        raise HTTPException(400, str(e))
 
-    return {"ok": True, "name": stem, "folder": str(dest.resolve())}
+    if scenario == Scenario.HAS_MANIFEST:
+        with _apply_lock:
+            return _load_and_respond(dest, name)
+
+    elif scenario in (Scenario.SINGLE_CSV, Scenario.SINGLE_SHEET_XLS):
+        with _apply_lock:
+            if scenario == Scenario.SINGLE_SHEET_XLS:
+                prepare_csvs(dest, scenario)
+            tables = inspect_tables(dest, scenario)
+            manifest = generate_manifest(name, tables)
+            write_manifest(dest, manifest)
+            return _load_and_respond(dest, name)
+
+    elif scenario == Scenario.MULTI_SHEET_XLS:
+        tables = inspect_tables(dest, scenario)
+        display_name = _best_dataset_name(name, tables)
+        return {
+            "ok": True, "loaded": False, "needs_config": True,
+            "config_type": "sheets", "name": display_name, "folder": str(dest),
+            "tables": [{"name": t.name, "columns": t.columns, "row_count": t.row_count} for t in tables],
+        }
+
+    elif scenario == Scenario.MULTI_CSV_NO_MANIFEST:
+        tables = inspect_tables(dest, scenario)
+        display_name = _best_dataset_name(name, tables)
+        return {
+            "ok": True, "loaded": False, "needs_config": True,
+            "config_type": "joins", "name": display_name, "folder": str(dest),
+            "tables": [{"name": t.name, "columns": t.columns, "row_count": t.row_count} for t in tables],
+        }
+
+    # Fallback (shouldn't reach here).
+    raise HTTPException(400, f"Unsupported upload scenario: {scenario.value}")
+
+
+class DatasetConfigureRequest(BaseModel):
+    folder: str
+    sheet: str | None = None
+    sheets: list[str] | None = None
+    joins: list[dict] | None = None
+
+
+@app.post("/api/datasets/configure")
+def configure_dataset(req: DatasetConfigureRequest):
+    global _active_dataset, _active_view
+    with _apply_lock:
+        dest = Path(req.folder).resolve()
+        if not dest.is_relative_to(DATASETS_DIR.resolve()):
+            raise HTTPException(400, "Invalid folder path")
+        if not dest.is_dir():
+            raise HTTPException(404, f"Folder not found: {req.folder}")
+
+        scenario = detect_scenario(dest)
+
+        selected_sheets = None
+        if req.sheet:
+            selected_sheets = [req.sheet]
+        elif req.sheets:
+            selected_sheets = req.sheets
+
+        if scenario in (Scenario.SINGLE_SHEET_XLS, Scenario.MULTI_SHEET_XLS):
+            prepare_csvs(dest, scenario, selected_sheets)
+
+        tables = inspect_tables(dest, scenario, selected_sheets)
+
+        join_defs = None
+        if req.joins:
+            required_keys = {"from_table", "from_field", "to_table", "to_field"}
+            join_defs = []
+            for j in req.joins:
+                missing = required_keys - j.keys()
+                if missing:
+                    raise HTTPException(400, f"Join definition missing keys: {sorted(missing)}")
+                join_defs.append(JoinDef(
+                    from_table=j["from_table"],
+                    from_field=j["from_field"],
+                    to_table=j["to_table"],
+                    to_field=j["to_field"],
+                ))
+
+        name = _best_dataset_name(dest.name, tables)
+        manifest = generate_manifest(name, tables, join_defs)
+        write_manifest(dest, manifest)
+
+        return _load_and_respond(dest, name)

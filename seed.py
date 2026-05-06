@@ -220,7 +220,7 @@ def seed(account_count: int = 400, opps_per_account_avg: int = 5, seed_value: in
             )
 
         con.execute(sql.SQL("""
-            CREATE OR REPLACE VIEW {schema}.salesforce AS
+            CREATE OR REPLACE VIEW {schema}._view_salesforce AS
             SELECT
                 o.opportunity_id,
                 o.opportunity_name,

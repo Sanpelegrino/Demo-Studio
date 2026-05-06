@@ -16,7 +16,7 @@
       <h2>Tableau connection</h2>
       <p class="muted">In Tableau Desktop: <b>Connect → PostgreSQL</b>. Drag only the view <code id="conn-view-inline">…</code> onto the canvas — not the raw tables. The agent updates the view automatically when it reshapes the underlying data.</p>
       <div class="kv">
-        <div class="k">Active dataset</div><div class="v"><strong id="conn-dataset">…</strong></div>
+        <div class="k">Active dataset</div><div class="v"><strong id="conn-dataset">…</strong> <button id="rename-dataset" class="mini" title="Rename dataset">&#9998;</button></div>
         <div class="k">Server</div><div class="v"><code id="conn-host">…</code></div>
         <div class="k">Port</div><div class="v"><code id="conn-port">…</code></div>
         <div class="k">Database</div><div class="v"><code id="conn-db">…</code></div>
@@ -35,22 +35,24 @@
         <pre id="sample">…</pre>
       </details>
       <div class="actions">
-        <button id="refresh">Refresh</button>
-        <button id="rollback">Rollback last change</button>
+        <button id="save-dataset" class="save">Save Changes as Dataset</button>
+        <button id="delete-dataset" class="danger">Delete Dataset</button>
       </div>
       <div class="dataset-switch">
         <label class="muted">Switch or reset dataset:</label>
         <div class="actions">
           <select id="dataset-select">
-            <option value="salesforce">Salesforce (built-in)</option>
             <option value="superstore">Superstore (built-in)</option>
+            <option value="salesforce">Salesforce (built-in)</option>
           </select>
           <button id="dataset-load" class="danger">Load</button>
           <span class="muted">or</span>
           <label class="file-upload mini">
-            Upload .zip
-            <input type="file" id="manifest-upload" accept=".zip" hidden />
+            Upload
+            <input type="file" id="file-upload" multiple accept=".csv,.xls,.xlsx,.zip" hidden />
           </label>
+          <a href="#" id="folder-upload-link" class="muted folder-link">or folder</a>
+          <input type="file" id="folder-upload" webkitdirectory hidden />
         </div>
       </div>
     </section>
@@ -77,6 +79,7 @@
       <textarea id="message" rows="3" placeholder="e.g. Add a health_score column to accounts that correlates with how many Closed Won opps they have. Drop the is_active column."></textarea>
       <div class="actions">
         <button id="send" class="primary">Plan change</button>
+        <button id="rollback" class="mini">Rollback last change</button>
         <span id="status" class="status"></span>
       </div>
 
@@ -101,6 +104,41 @@
       </div>
     </section>
 
+    <!-- Dataset configuration modal -->
+    <div id="config-modal" class="modal-scrim hidden">
+      <div class="modal-card">
+        <h3 id="config-modal-title">Configure dataset</h3>
+
+        <!-- Sheet picker (shown for multi-sheet XLS) -->
+        <div id="config-sheet-picker" class="hidden">
+          <p class="muted">Select sheets to include:</p>
+          <div id="config-sheets-list"></div>
+          <div class="config-mode-toggle">
+            <label><input type="radio" name="config-mode" value="single" checked /> Load one table (no joins)</label>
+            <label><input type="radio" name="config-mode" value="multi" /> Multiple tables (define relationships)</label>
+          </div>
+        </div>
+
+        <!-- Table info (shown for join builder) -->
+        <div id="config-tables" class="hidden">
+          <p class="muted">Tables detected:</p>
+          <div id="config-tables-list"></div>
+        </div>
+
+        <!-- Join builder (shown when user needs to define relationships) -->
+        <div id="config-joins" class="hidden">
+          <p class="muted">Relationships:</p>
+          <div id="config-joins-list"></div>
+          <button id="config-add-join" class="mini">+ Add relationship</button>
+        </div>
+
+        <!-- Footer -->
+        <div class="modal-footer">
+          <button id="config-cancel">Cancel</button>
+          <button id="config-load" class="primary">Load dataset</button>
+        </div>
+      </div>
+    </div>
 
   </main>
 

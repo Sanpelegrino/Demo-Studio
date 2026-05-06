@@ -164,7 +164,7 @@ def seed_superstore() -> tuple[int, int, int]:
             )
 
         con.execute(sql.SQL("""
-            CREATE OR REPLACE VIEW {schema}.superstore AS
+            CREATE OR REPLACE VIEW {schema}._view_superstore AS
             SELECT
                 o.row_id,
                 o.order_id,

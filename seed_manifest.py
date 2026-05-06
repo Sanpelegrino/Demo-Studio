@@ -4,8 +4,8 @@ Given a folder containing a `manifest.json` and one CSV per declared
 table, this module drops only the incoming tables (not the whole schema),
 loads the CSVs verbatim, then builds one analytics view per fact table.
 
-For single-fact datasets: one view named `analytics`.
-For multi-fact datasets: one view per fact, named `analytics_<fact>`.
+For single-fact datasets: one view named `_view_<dataset>`.
+For multi-fact datasets: one view per fact, named `_view_<dataset>_<fact>`.
 
 Dimension joins are walked transitively — if Fact_Order -> Dim_Store
 and Dim_Store -> Dim_Location, the Fact_Order view includes Location
@@ -307,13 +307,18 @@ def load_manifest(folder: str | os.PathLike[str]) -> dict[str, Any]:
         name = t["tableName"]
         frames[name] = _read_csv(folder_path, name)
 
-    # Determine view names.
+    # Determine view names — prefix with _view_ so it sorts first in Tableau.
+    dataset_name = manifest.get("datasetName", folder_path.name)
+    view_base = f"_view_{_ident(dataset_name)}" if dataset_name else "_view_analytics"
+    if not view_base:
+        view_base = "_view_analytics"
+
     if len(fact_tables) == 1:
-        view_names = {"analytics": fact_tables[0]["tableName"]}
+        view_names = {view_base: fact_tables[0]["tableName"]}
     else:
         view_names = {}
         for ft in fact_tables:
-            view_names[f"analytics_{table_idents[ft['tableName']]}"] = ft["tableName"]
+            view_names[f"{view_base}_{table_idents[ft['tableName']]}"] = ft["tableName"]
 
     with psycopg.connect(**_conn_kwargs()) as con:
         con.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(

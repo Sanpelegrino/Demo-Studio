@@ -31,6 +31,8 @@ re-distill this file.
 
 - **Don't** multiply `decimal.Decimal` by a Python `float` — it raises `TypeError`. **Do** convert explicitly: `Decimal(str(f)) * d`, or coerce both sides to `float` when precision isn't needed.
 - **Don't** build very large synthetic datasets entirely in Python memory (lists of millions of rows before insert). **Do** generate in SQL with `generate_series`/CTEs, or stream in batches and `COPY`/`executemany` incrementally.
+- **Don't** write Python block code (imports, loops, list comprehensions) directly in a SQL file or query string — it will parse as SQL and fail with "syntax error at or near 'import'" or similar. **Do** place Python logic in a separate execution block (magic command, script file, or explicit language tag) so it runs in the Python interpreter, not the SQL engine.
+- **Don't** sample or slice Python lists that may be shorter than expected (e.g., `return_accounts[i]` when the list has fewer than `i` elements). **Do** validate list length first, use `random.choice()` on the full list, or fetch enough rows upfront to guarantee coverage.
 
 <!-- Add new items above. Example format:
 - **Don't** do X because Y. **Do** Z instead.

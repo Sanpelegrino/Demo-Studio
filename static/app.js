@@ -225,7 +225,69 @@ if ($("#rollback")) {
   });
 }
 
-if ($("#refresh")) $("#refresh").addEventListener("click", refresh);
+if ($("#save-dataset")) {
+  $("#save-dataset").addEventListener("click", async () => {
+    const name = prompt("Save current workspace as dataset.\nEnter a name:");
+    if (!name || !name.trim()) return;
+    setStatus("Saving…");
+    const btn = $("#save-dataset");
+    if (btn) btn.disabled = true;
+    try {
+      const res = await api("/api/datasets/save", {
+        method: "POST",
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      setStatus(`Saved "${res.name}" (${res.tables} tables).`, "ok");
+      await refreshDatasets();
+    } catch (e) {
+      setStatus(e.message, "err");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+}
+
+if ($("#delete-dataset")) {
+  $("#delete-dataset").addEventListener("click", async () => {
+    const dataset = $("#conn-dataset")?.textContent?.trim() || "this dataset";
+    if (!confirm(`Delete "${dataset}" and wipe the workspace?`)) return;
+    const btn = $("#delete-dataset");
+    if (btn) btn.disabled = true;
+    setStatus("Deleting…");
+    try {
+      const res = await fetch("/api/datasets/delete", { method: "DELETE" });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`${res.status}: ${text}`);
+      }
+      setStatus(`Deleted "${dataset}".`, "ok");
+      await refreshAll();
+    } catch (e) {
+      setStatus(e.message, "err");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+}
+
+if ($("#rename-dataset")) {
+  $("#rename-dataset").addEventListener("click", async () => {
+    const current = $("#conn-dataset")?.textContent || "";
+    const newName = prompt("Rename dataset:", current);
+    if (!newName || !newName.trim() || newName.trim() === current) return;
+    try {
+      const res = await api("/api/datasets/rename", {
+        method: "PATCH",
+        body: JSON.stringify({ new_name: newName.trim() }),
+      });
+      setStatus(`Renamed to "${res.name}".`, "ok");
+      await refreshAll();
+    } catch (e) {
+      setStatus(e.message, "err");
+    }
+  });
+}
+
 
 async function refreshDatasets() {
   const sel = $("#dataset-select");
@@ -276,30 +338,393 @@ if ($("#dataset-load")) {
   });
 }
 
-if ($("#manifest-upload")) {
-  $("#manifest-upload").addEventListener("change", async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+if ($("#file-upload")) {
+  $("#file-upload").addEventListener("change", async (e) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
     setStatus("Uploading…");
     try {
       const form = new FormData();
-      form.append("file", file);
+      for (const f of files) {
+        form.append("files", f);
+      }
       const res = await fetch("/api/datasets/upload", { method: "POST", body: form });
       if (!res.ok) {
         const text = await res.text();
         throw new Error(`${res.status}: ${text}`);
       }
       const data = await res.json();
-      setStatus(`Uploaded ${data.name}. Select it and click Load.`, "ok");
-      await refreshDatasets();
-      const sel = $("#dataset-select");
-      if (sel) sel.value = `manifest:${data.folder}`;
+      if (data.loaded) {
+        setStatus(`Loaded ${data.dataset || data.name}.`, "ok");
+        await refreshAll();
+      } else if (data.needs_config) {
+        _configState = { folder: data.folder, name: data.name, tables: data.tables, configType: data.config_type };
+        openConfigModal(data);
+      } else {
+        setStatus(`Uploaded ${data.name}. Select it and click Load.`, "ok");
+        await refreshDatasets();
+        const sel = $("#dataset-select");
+        if (sel) sel.value = `manifest:${data.folder}`;
+      }
     } catch (err) {
       setStatus(err.message, "err");
     }
     e.target.value = "";
   });
 }
+
+if ($("#folder-upload-link")) {
+  $("#folder-upload-link").addEventListener("click", (e) => {
+    e.preventDefault();
+    const input = $("#folder-upload");
+    if (input) input.click();
+  });
+}
+
+// --- Folder upload + config modal logic ---
+
+let _configState = null; // { folder, name, tables, configType }
+
+if ($("#folder-upload")) {
+  $("#folder-upload").addEventListener("change", async (e) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setStatus("Uploading folder…");
+    try {
+      const form = new FormData();
+      for (const f of files) {
+        form.append("files", f);
+      }
+      const res = await fetch("/api/datasets/upload", { method: "POST", body: form });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`${res.status}: ${text}`);
+      }
+      const data = await res.json();
+      if (data.loaded) {
+        setStatus(`Loaded ${data.dataset || data.name}.`, "ok");
+        await refreshAll();
+      } else if (data.needs_config) {
+        _configState = { folder: data.folder, name: data.name, tables: data.tables, configType: data.config_type };
+        openConfigModal(data);
+      }
+    } catch (err) {
+      setStatus(err.message, "err");
+    }
+    e.target.value = "";
+  });
+}
+
+function openConfigModal(data) {
+  const modal = $("#config-modal");
+  if (!modal) return;
+  modal.classList.remove("hidden");
+
+  const title = $("#config-modal-title");
+  if (title) title.textContent = `Configure: ${data.name}`;
+
+  // Reset all sections and their contents
+  const sheetPicker = $("#config-sheet-picker");
+  const tablesSection = $("#config-tables");
+  const joinsSection = $("#config-joins");
+  if (sheetPicker) sheetPicker.classList.add("hidden");
+  if (tablesSection) tablesSection.classList.add("hidden");
+  if (joinsSection) joinsSection.classList.add("hidden");
+
+  const joinsList = $("#config-joins-list");
+  if (joinsList) joinsList.innerHTML = "";
+
+  const tablesList = $("#config-tables-list");
+  if (tablesList) tablesList.innerHTML = "";
+
+  const sheetsList = $("#config-sheets-list");
+  if (sheetsList) sheetsList.innerHTML = "";
+
+  // Reset radio buttons to default
+  const singleRadio = document.querySelector('input[name="config-mode"][value="single"]');
+  if (singleRadio) singleRadio.checked = true;
+
+  if (data.config_type === "sheets") {
+    if (sheetPicker) sheetPicker.classList.remove("hidden");
+    renderSheetPicker(data.tables);
+  } else if (data.config_type === "joins") {
+    if (tablesSection) tablesSection.classList.remove("hidden");
+    if (joinsSection) joinsSection.classList.remove("hidden");
+    renderTablesList(data.tables);
+    renderJoinRows();
+  }
+}
+
+function closeConfigModal() {
+  const modal = $("#config-modal");
+  if (modal) modal.classList.add("hidden");
+  const joinsList = $("#config-joins-list");
+  if (joinsList) joinsList.innerHTML = "";
+  _configState = null;
+}
+
+function renderSheetPicker(tables) {
+  const list = $("#config-sheets-list");
+  if (!list) return;
+  list.innerHTML = "";
+  tables.forEach((t) => {
+    const label = document.createElement("label");
+    label.className = "table-info-card";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = t.name;
+    cb.checked = true;
+    cb.addEventListener("change", updateSingleModeAvailability);
+    label.appendChild(cb);
+    const info = document.createElement("span");
+    info.innerHTML = ` <strong class="table-name">${escapeHtml(t.name)}</strong> <span class="table-rows">(${t.row_count.toLocaleString()} rows)</span><br><span class="table-columns">${t.columns.slice(0, 5).map(escapeHtml).join(", ")}${t.columns.length > 5 ? "…" : ""}</span>`;
+    label.appendChild(info);
+    list.appendChild(label);
+  });
+  updateSingleModeAvailability();
+}
+
+function updateSingleModeAvailability() {
+  const checked = document.querySelectorAll("#config-sheets-list input[type=checkbox]:checked");
+  const singleRadio = document.querySelector('input[name="config-mode"][value="single"]');
+  const multiRadio = document.querySelector('input[name="config-mode"][value="multi"]');
+  if (!singleRadio) return;
+  if (checked.length > 1) {
+    singleRadio.disabled = true;
+    if (singleRadio.checked) {
+      multiRadio.checked = true;
+      multiRadio.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  } else {
+    singleRadio.disabled = false;
+  }
+}
+
+function renderTablesList(tables) {
+  const list = $("#config-tables-list");
+  if (!list) return;
+  list.innerHTML = "";
+  tables.forEach((t) => {
+    const div = document.createElement("div");
+    div.className = "table-info-card";
+    div.innerHTML = `<strong class="table-name">${escapeHtml(t.name)}</strong> <span class="table-rows">(${t.row_count.toLocaleString()} rows)</span><br><span class="table-columns">${t.columns.slice(0, 6).map(escapeHtml).join(", ")}${t.columns.length > 6 ? "…" : ""}</span>`;
+    list.appendChild(div);
+  });
+}
+
+function renderJoinRows() {
+  const list = $("#config-joins-list");
+  if (!list) return;
+  // Start with one empty row if none exist
+  if (list.children.length === 0) addJoinRow();
+}
+
+function addJoinRow() {
+  const list = $("#config-joins-list");
+  if (!list || !_configState) return;
+  const tables = _configState.tables;
+
+  const row = document.createElement("div");
+  row.className = "join-row";
+
+  // From table select
+  const fromTable = document.createElement("select");
+  fromTable.className = "join-from-table";
+  tables.forEach((t) => {
+    const opt = document.createElement("option");
+    opt.value = t.name;
+    opt.textContent = t.name;
+    fromTable.appendChild(opt);
+  });
+
+  // From field select
+  const fromField = document.createElement("select");
+  fromField.className = "join-from-field";
+
+  // Arrow
+  const arrow = document.createElement("span");
+  arrow.className = "join-arrow";
+  arrow.textContent = "→";
+
+  // To table select
+  const toTable = document.createElement("select");
+  toTable.className = "join-to-table";
+  tables.forEach((t) => {
+    const opt = document.createElement("option");
+    opt.value = t.name;
+    opt.textContent = t.name;
+    toTable.appendChild(opt);
+  });
+  // Default to second table if available
+  if (tables.length > 1) toTable.value = tables[1].name;
+
+  // To field select
+  const toField = document.createElement("select");
+  toField.className = "join-to-field";
+
+  // Remove button
+  const removeBtn = document.createElement("button");
+  removeBtn.className = "join-remove mini";
+  removeBtn.textContent = "×";
+  removeBtn.addEventListener("click", () => row.remove());
+
+  // Populate field selects when table changes
+  function populateFields(tableSelect, fieldSelect) {
+    const tableName = tableSelect.value;
+    const table = tables.find((t) => t.name === tableName);
+    fieldSelect.innerHTML = "";
+    if (table) {
+      table.columns.forEach((col) => {
+        const opt = document.createElement("option");
+        opt.value = col;
+        opt.textContent = col;
+        fieldSelect.appendChild(opt);
+      });
+    }
+  }
+
+  fromTable.addEventListener("change", () => populateFields(fromTable, fromField));
+  toTable.addEventListener("change", () => populateFields(toTable, toField));
+
+  row.appendChild(fromTable);
+  row.appendChild(fromField);
+  row.appendChild(arrow);
+  row.appendChild(toTable);
+  row.appendChild(toField);
+  row.appendChild(removeBtn);
+  list.appendChild(row);
+
+  // Initial population
+  populateFields(fromTable, fromField);
+  populateFields(toTable, toField);
+}
+
+if ($("#config-add-join")) {
+  $("#config-add-join").addEventListener("click", addJoinRow);
+}
+
+if ($("#config-cancel")) {
+  $("#config-cancel").addEventListener("click", closeConfigModal);
+}
+
+if ($("#config-load")) {
+  $("#config-load").addEventListener("click", async () => {
+    if (!_configState) return;
+    const { folder, configType, tables } = _configState;
+
+    let body = { folder };
+
+    if (configType === "sheets") {
+      // Check which mode is selected
+      const mode = document.querySelector('input[name="config-mode"]:checked');
+      const modeValue = mode ? mode.value : "single";
+
+      // Get checked sheets
+      const checked = [...document.querySelectorAll("#config-sheets-list input[type=checkbox]:checked")]
+        .map((cb) => cb.value);
+
+      if (checked.length === 0) {
+        setStatus("Select at least one sheet.", "err");
+        return;
+      }
+
+      if (modeValue === "single") {
+        // Load first checked sheet as single table
+        body.sheet = checked[0];
+      } else {
+        // Multiple sheets — need joins
+        body.sheets = checked;
+        // Collect join definitions from the join builder
+        const joins = collectJoinDefs();
+        if (joins.length === 0) {
+          // Show join builder if not visible
+          const joinsSection = $("#config-joins");
+          const tablesSection = $("#config-tables");
+          if (joinsSection) joinsSection.classList.remove("hidden");
+          if (tablesSection) {
+            tablesSection.classList.remove("hidden");
+            // Re-render tables with only checked sheets
+            const selectedTables = tables.filter((t) => checked.includes(t.name));
+            _configState.tables = selectedTables;
+            renderTablesList(selectedTables);
+          }
+          renderJoinRows();
+          setStatus("Define at least one relationship between tables.", "err");
+          return;
+        }
+        body.joins = joins;
+      }
+    } else {
+      // Multi-CSV: collect joins
+      const joins = collectJoinDefs();
+      if (joins.length === 0) {
+        setStatus("Define at least one relationship between tables.", "err");
+        return;
+      }
+      body.joins = joins;
+    }
+
+    // Send configure request
+    setStatus("Loading dataset…");
+    const loadBtn = $("#config-load");
+    if (loadBtn) loadBtn.disabled = true;
+
+    try {
+      const res = await api("/api/datasets/configure", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      closeConfigModal();
+      const tableCount = Object.keys(res.tables || {}).length;
+      const rowTotal = Object.values(res.tables || {}).reduce((a, b) => a + b, 0);
+      setStatus(`Loaded ${res.dataset}: ${tableCount} tables, ${rowTotal.toLocaleString()} rows.`, "ok");
+      await refreshAll();
+    } catch (err) {
+      setStatus(err.message, "err");
+    } finally {
+      if (loadBtn) loadBtn.disabled = false;
+    }
+  });
+}
+
+function collectJoinDefs() {
+  const rows = document.querySelectorAll("#config-joins-list .join-row");
+  const joins = [];
+  rows.forEach((row) => {
+    const fromTable = row.querySelector(".join-from-table")?.value;
+    const fromField = row.querySelector(".join-from-field")?.value;
+    const toTable = row.querySelector(".join-to-table")?.value;
+    const toField = row.querySelector(".join-to-field")?.value;
+    if (fromTable && fromField && toTable && toField) {
+      joins.push({ from_table: fromTable, from_field: fromField, to_table: toTable, to_field: toField });
+    }
+  });
+  return joins;
+}
+
+document.querySelectorAll('input[name="config-mode"]').forEach((radio) => {
+  radio.addEventListener("change", (e) => {
+    const joinsSection = $("#config-joins");
+    const tablesSection = $("#config-tables");
+    if (e.target.value === "multi") {
+      if (joinsSection) joinsSection.classList.remove("hidden");
+      if (tablesSection) tablesSection.classList.remove("hidden");
+      // Render tables and first join row if not already
+      if (_configState) {
+        const checked = [...document.querySelectorAll("#config-sheets-list input[type=checkbox]:checked")]
+          .map((cb) => cb.value);
+        const selectedTables = _configState.tables.filter((t) => checked.includes(t.name));
+        renderTablesList(selectedTables);
+        renderJoinRows();
+      }
+    } else {
+      if (joinsSection) joinsSection.classList.add("hidden");
+      if (tablesSection) tablesSection.classList.add("hidden");
+    }
+  });
+});
+
+// --- End folder upload + config modal logic ---
 
 if ($("#copy-pass")) {
   $("#copy-pass").addEventListener("click", async () => {

@@ -152,6 +152,8 @@ button.primary { background: var(--accent-dim); border-color: var(--accent); }
 button.primary:hover { filter: brightness(1.2); }
 button.danger { color: var(--danger); border-color: var(--danger); }
 button.danger:hover { background: var(--danger); color: #fff; }
+button.save { color: var(--ok); border-color: var(--ok); }
+button.save:hover { background: var(--ok); color: #fff; }
 button.mini { padding: 2px 6px; font-size: 11px; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -159,7 +161,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .status { color: var(--muted); font-size: 12px; }
 .status.ok { color: var(--ok); }
-.status.err { color: var(--danger); }
+.status.err { color: var(--danger); font-weight: 600; animation: status-flash 0.3s ease; }
+@keyframes status-flash {
+  0%, 50% { background: rgba(217, 92, 92, 0.15); border-radius: 4px; }
+  100% { background: transparent; }
+}
 
 .hidden { display: none; }
 
@@ -197,6 +203,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   transition: background 0.1s;
 }
 .file-upload:hover { background: var(--accent-dim); }
+.folder-link { font-size: 12px; text-decoration: underline; cursor: pointer; }
 #history .history-item { cursor: pointer; transition: background 0.1s; padding-left: 8px; padding-right: 8px; margin: 0 -8px; border-radius: 4px; }
 #history .history-item:hover { background: rgba(110, 168, 255, 0.06); }
 #history .history-item.selected { background: var(--accent-dim); }
@@ -314,3 +321,132 @@ body.ext-body .card {
 #history .when { color: var(--muted); font-family: var(--mono); font-size: 12px; }
 #history .lang { font-family: var(--mono); font-size: 11px; color: var(--accent); }
 #history .empty { color: var(--muted); padding: 8px 0; }
+
+/* ─── Config / Join-Builder Modal ──────────────────────────── */
+
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 18, 23, 0.42);
+}
+.modal-scrim.hidden { display: none; }
+
+.modal-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+  width: 100%;
+  max-width: 560px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.modal-card h3 {
+  margin: 0 0 16px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* Sheet picker & mode toggle */
+.config-mode-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.config-mode-toggle label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.config-mode-toggle label:has(input:disabled) {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Table info cards */
+.table-info-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.table-info-card input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.table-info-card .table-name {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+.table-info-card .table-columns {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.table-info-card .table-rows {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* Join rows */
+.join-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto 1fr 1fr auto;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.join-row select {
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.join-row select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.join-row .join-arrow {
+  color: var(--muted);
+  font-size: 13px;
+  user-select: none;
+  text-align: center;
+}
+.join-row .join-remove {
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.join-row .join-remove:hover {
+  background: var(--danger);
+  color: #fff;
+}

@@ -1,10 +1,8 @@
 # Demo Studio — Setup Guide
 
-This guide is for agents or engineers setting up Demo Studio from scratch.
+## Quick Install
 
-## Quick Install (Recommended)
-
-The install script handles everything — Python, PostgreSQL, database creation, dependencies, and configuration:
+The install script handles everything: Python, PostgreSQL, database creation, dependencies, and configuration.
 
 **Windows:**
 ```
@@ -17,27 +15,63 @@ chmod +x install.sh
 ./install.sh
 ```
 
-The script will prompt you for your Anthropic bearer token. After setup completes, the app launches automatically at <http://localhost:3777>.
+The script will:
+1. Install Python 3.12 (via winget on Windows, Homebrew on Mac) if not already present.
+2. Install PostgreSQL 16/17 if not already present.
+3. Start the PostgreSQL service.
+4. Create the `demo_studio` database and user.
+5. Create a Python virtual environment and install dependencies.
+6. Prompt you for your Anthropic Bedrock bearer token and write it to `.env`.
+7. Launch the app and open your browser to <http://localhost:3777>.
 
-For subsequent launches (after initial install):
+### Subsequent launches
 
-**Windows:** `start.bat`  
+After the first install, use the start script instead — it skips setup and just launches the server:
+
+**Windows:** `start.bat`
 **Mac/Linux:** `./start.sh`
+
+---
+
+## What you need beforehand
+
+- **Windows 10/11** or **macOS 12+** or **Linux** (Ubuntu 20.04+)
+- An internet connection (for installing packages on first run)
+- A **Salesforce Bedrock gateway bearer token** — this authenticates requests to Claude. Ask your team lead if you don't have one.
+- (Optional) **Tableau Desktop** for the dashboard integration and extensions
 
 ---
 
 ## Manual Setup
 
-If you prefer to set things up manually, or if the install script fails on a specific step:
+If the install script fails on a specific step or you prefer to control each piece:
 
-### Prerequisites
+### 1. Install Python 3.10+
 
-- Python 3.10+
-- PostgreSQL 14+ (local)
-- A Salesforce Bedrock gateway endpoint with a valid auth token (Claude via Anthropic-on-Bedrock)
-- (Optional) Tableau Desktop for dashboard integration
+Download from <https://www.python.org/downloads/> or use your system package manager. Verify:
 
-### Installation
+```
+python --version
+```
+
+### 2. Install PostgreSQL 14+
+
+Download from <https://www.postgresql.org/download/> or use your system package manager. Make sure the service is running:
+
+```
+pg_isready -h 127.0.0.1 -p 5432
+```
+
+### 3. Create the database
+
+Connect as the PostgreSQL superuser and run:
+
+```sql
+CREATE USER demo_studio WITH PASSWORD 'demo_local_dev';
+CREATE DATABASE demo_studio OWNER demo_studio;
+```
+
+### 4. Install Python dependencies
 
 ```bash
 cd "Demo Studio"
@@ -51,161 +85,43 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Environment variables
-
-Copy the example and fill in your values:
+### 5. Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Required variables:
+Open `.env` and fill in your values:
 
 | Variable | Description |
 |----------|-------------|
-| `ANTHROPIC_AUTH_TOKEN` | Bearer token for the Bedrock gateway |
-| `ANTHROPIC_BEDROCK_BASE_URL` | Gateway base URL (e.g., `https://...sfdc.sh/bedrock`) |
+| `ANTHROPIC_AUTH_TOKEN` | Your Bedrock gateway bearer token |
+| `ANTHROPIC_BEDROCK_BASE_URL` | Gateway URL (e.g. `https://...sfdc.sh/bedrock`) |
 | `ANTHROPIC_MODEL` | Model ID (default: `us.anthropic.claude-sonnet-4-5-20250929-v1:0`) |
-| `NODE_EXTRA_CA_CERTS` | Path to CA bundle if behind corporate proxy |
-| `PGHOST` | Postgres host (default: `127.0.0.1`) |
-| `PGPORT` | Postgres port (default: `5432`) |
-| `PGUSER` | Postgres user (default: `demo_studio`) |
-| `PGPASSWORD` | Postgres password (default: `demo_local_dev`) |
-| `PGDATABASE` | Database name (default: `demo_studio`) |
-| `PGSCHEMA` | Working schema (default: `demo`) |
+| `NODE_EXTRA_CA_CERTS` | Path to CA bundle if behind a corporate proxy (leave blank otherwise) |
+| `PGHOST` | `127.0.0.1` |
+| `PGPORT` | `5432` |
+| `PGUSER` | `demo_studio` |
+| `PGPASSWORD` | `demo_local_dev` |
+| `PGDATABASE` | `demo_studio` |
+| `PGSCHEMA` | `demo` |
 
-### Database setup
-
-Create the database and user (as a Postgres superuser):
-
-```sql
-CREATE USER demo_studio WITH PASSWORD 'demo_local_dev';
-CREATE DATABASE demo_studio OWNER demo_studio;
-```
-
-The application creates the `demo` and `snapshots` schemas automatically on first boot. No manual migration required.
-
-### Running the server
+### 6. Launch
 
 ```bash
-uvicorn app:app --reload --port 3777
+uvicorn app:app --host 0.0.0.0 --port 3777
 ```
 
-The server:
-1. Checks if the `demo` schema has any tables.
-2. If empty, seeds the default Superstore dataset (orders, returns, people).
-3. Starts accepting requests on <http://localhost:3777>.
+Open <http://localhost:3777>. On first boot the app seeds a starter dataset automatically.
 
-## Architecture
+---
 
-```
-Demo Studio/
-  app.py                  # FastAPI endpoints, EventBus, apply/retry loop
-  planner.py              # Claude invocation, prompt assembly, pitfalls RAG
-  seed.py                 # Salesforce seed (accounts + opportunities)
-  seed_superstore.py      # Superstore seed (orders + returns + people)
-  seed_manifest.py        # CSV manifest loader (multi-table, join graph)
-  snapshots_store.py      # Postgres snapshot/rollback system
-  prompts/
-    pitfalls.md           # Curated rules (injected into system prompt)
-    pitfalls_raw.jsonl    # Raw error log (auto-cleared after distillation)
-    pitfalls_rag.json     # Detailed error playbooks (used at retry time)
-    pitfalls_distill_prompt.md   # Prompt for consolidating raw → curated
-    pitfalls_rag_prompt.md       # Prompt for building RAG entries
-  datasets/               # Manifest dataset folders (CSV + manifest.json)
-  static/
-    index.html            # Main UI (full controls)
-    embed.html            # Tableau dashboard embed (chat only, no history)
-    extension.html        # Live Refresh extension UI
-    history.html          # Standalone history view
-    app.js                # Shared frontend logic
-    styles.css            # All styles (CSS custom properties, no framework)
-    live-refresh.trex     # Tableau extension manifest (auto-refresh)
-    live-chat.trex        # Tableau extension manifest (embedded chat)
-    tableau.extensions.1.latest.min.js  # Tableau Extensions API
-  docs/
-    USER_GUIDE.md         # End-user documentation
-    SETUP_GUIDE.md        # This file
-```
+## Troubleshooting
 
-## Key endpoints
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/` | Main UI |
-| `GET` | `/embed` | Dashboard chat embed |
-| `GET` | `/api/status` | Schema, tables, views, history, connection info |
-| `POST` | `/api/chat` | Plan a mutation (returns summary + code) |
-| `POST` | `/api/apply` | Execute a plan (with auto-retry up to 3x) |
-| `POST` | `/api/rollback` | Undo the last applied change |
-| `POST` | `/api/reseed?dataset=salesforce\|superstore` | Wipe and reseed |
-| `POST` | `/api/load-manifest` | Load a manifest dataset |
-| `GET` | `/api/datasets` | List available manifest datasets |
-| `POST` | `/api/datasets/upload` | Upload a .zip manifest dataset |
-| `GET` | `/api/events` | SSE stream (workspace_changed events) |
-| `GET` | `/api/pitfalls` | Current pitfalls state |
-| `PUT` | `/api/pitfalls` | Update curated pitfalls |
-| `POST` | `/api/pitfalls/distill` | Manually trigger distillation |
-| `DELETE` | `/api/pitfalls/raw` | Clear raw error log |
-
-## Pitfalls system (self-improving prompts)
-
-The system has two tiers:
-
-1. **Prevention layer** (`pitfalls.md`, max 120 lines) — injected into the system prompt on every call. Contains concise "Don't X, Do Y" rules for common mistakes.
-
-2. **RAG rescue layer** (`pitfalls_rag.json`, unlimited) — detailed entries with error patterns, keywords, root causes, fix strategies, and example code. Queried via keyword matching at retry time and injected alongside the error context.
-
-**Auto-distillation trigger:** After 5 errors accumulate in `pitfalls_raw.jsonl`, a background thread:
-- Calls Claude to merge raw errors into `pitfalls.md` (respecting the 120-line cap)
-- Calls Claude to build/update `pitfalls_rag.json` with detailed entries
-- Clears the raw log
-
-## Tableau extensions setup
-
-### Live Refresh
-
-1. In Tableau: Dashboard → Extensions → Add Extension
-2. Point to: `http://localhost:3777/extension/manifest`
-3. The extension auto-refreshes all data sources when `workspace_changed` events fire
-
-### Live Chat
-
-1. In Tableau: Dashboard → Extensions → Add Extension
-2. Point to: `http://localhost:3777/extension/chat`
-3. Analysts can reshape data from within the dashboard
-
-## Manifest dataset format
-
-A manifest dataset is a folder containing:
-
-```json
-// manifest.json
-{
-  "dataset": "My Dataset",
-  "tables": [
-    {
-      "tableName": "orders",
-      "fileName": "orders.csv",
-      "tableRole": "fact",
-      "primaryKey": "order_id"
-    },
-    {
-      "tableName": "customers",
-      "fileName": "customers.csv",
-      "tableRole": "dimension",
-      "primaryKey": "customer_id"
-    }
-  ],
-  "joinPaths": [
-    {
-      "from": "orders",
-      "to": "customers",
-      "fromKey": "customer_id",
-      "toKey": "customer_id"
-    }
-  ]
-}
-```
-
-Each table entry references a CSV file in the same folder. The system creates tables, loads data, and auto-generates analytics views from the join graph (BFS from fact tables through dimensions).
+| Problem | Fix |
+|---------|-----|
+| `psql` not found after installing PostgreSQL | Close your terminal and open a new one so the PATH updates. On Windows, check `C:\Program Files\PostgreSQL\17\bin` is on your PATH. |
+| PostgreSQL won't start | On Windows: open Services (`services.msc`), find `postgresql-x64-17`, and start it. On Mac: `brew services start postgresql@16`. |
+| `pip install` fails with SSL errors | Set `NODE_EXTRA_CA_CERTS` in `.env` to your corporate CA bundle path, or try `pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt`. |
+| Port 3777 already in use | Another instance is running. Kill it or change the port in `start.bat`/`start.sh`. |
+| Browser opens but page is blank | Wait a few seconds for the server to finish starting. Check the terminal for errors. |

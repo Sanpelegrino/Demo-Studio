@@ -1,118 +1,78 @@
 # Demo Studio — Setup Guide
 
-## Quick Install
+## What you need
 
-The install script handles everything: Python, PostgreSQL, database creation, dependencies, and configuration.
+The install script handles Python, PostgreSQL, and all dependencies automatically. You only need one thing:
 
-**Windows:**
+**Your Bedrock gateway bearer token.**
+
+### How to get your token
+
+**Already have Claude Code installed?** Your token is in your Claude Code settings file:
+
+- **Mac/Linux:** `~/.claude/settings.json`
+- **Windows:** `C:\Users\<you>\.claude\settings.json`
+
+Open the file and copy the value of `ANTHROPIC_AUTH_TOKEN` from the `env` section.
+
+**Don't have a token yet?** Follow the provisioning steps in this Slack canvas:
+https://salesforce.enterprise.slack.com/docs/T5J4Q04QG/F0AU8DXM71R
+
+---
+
+## Install
+
+Open a terminal in the Demo Studio folder and run the install script for your platform:
+
+**Windows (Command Prompt or PowerShell):**
 ```
 install.bat
 ```
 
-**Mac/Linux:**
+**Mac/Linux (Terminal):**
 ```bash
 chmod +x install.sh
 ./install.sh
 ```
 
 The script will:
-1. Install Python 3.12 (via winget on Windows, Homebrew on Mac) if not already present.
-2. Install PostgreSQL 16/17 if not already present.
+
+1. Detect or install **Python 3.12** (via winget on Windows, Homebrew on Mac).
+2. Detect or install **PostgreSQL 16/17**.
 3. Start the PostgreSQL service.
 4. Create the `demo_studio` database and user.
-5. Create a Python virtual environment and install dependencies.
-6. Prompt you for your Anthropic Bedrock bearer token and write it to `.env`.
-7. Launch the app and open your browser to <http://localhost:3777>.
+5. Create a Python virtual environment and install all dependencies.
+6. Prompt you for your **bearer token** and write it to `.env`.
+7. Launch the app and open your browser to http://localhost:3777.
 
-### Subsequent launches
-
-After the first install, use the start script instead — it skips setup and just launches the server:
-
-**Windows:** `start.bat`
-**Mac/Linux:** `./start.sh`
+When the browser opens, you're ready to go.
 
 ---
 
-## What you need beforehand
+## Subsequent launches
 
-- **Windows 10/11** or **macOS 12+** or **Linux** (Ubuntu 20.04+)
-- An internet connection (for installing packages on first run)
-- A **Salesforce Bedrock gateway bearer token** — this authenticates requests to Claude. Ask your team lead if you don't have one.
-- (Optional) **Tableau Desktop** for the dashboard integration and extensions
+After the first install, use the start script — it skips setup and just launches the server:
+
+**Windows:**
+```
+start.bat
+```
+
+**Mac/Linux:**
+```bash
+./start.sh
+```
 
 ---
 
-## Manual Setup
+## Next steps: Tableau extensions
 
-If the install script fails on a specific step or you prefer to control each piece:
+If you're using Tableau Desktop, Demo Studio includes two dashboard extensions that connect Tableau directly to your workspace:
 
-### 1. Install Python 3.10+
+- **Live Refresh** — automatically refreshes your data sources when you reshape data.
+- **Live Chat** — embeds the chat interface inside a Tableau dashboard so analysts can make changes without leaving Tableau.
 
-Download from <https://www.python.org/downloads/> or use your system package manager. Verify:
-
-```
-python --version
-```
-
-### 2. Install PostgreSQL 14+
-
-Download from <https://www.postgresql.org/download/> or use your system package manager. Make sure the service is running:
-
-```
-pg_isready -h 127.0.0.1 -p 5432
-```
-
-### 3. Create the database
-
-Connect as the PostgreSQL superuser and run:
-
-```sql
-CREATE USER demo_studio WITH PASSWORD 'demo_local_dev';
-CREATE DATABASE demo_studio OWNER demo_studio;
-```
-
-### 4. Install Python dependencies
-
-```bash
-cd "Demo Studio"
-python -m venv .venv
-
-# Windows
-.venv\Scripts\activate
-# macOS/Linux
-source .venv/bin/activate
-
-pip install -r requirements.txt
-```
-
-### 5. Configure environment variables
-
-```bash
-cp .env.example .env
-```
-
-Open `.env` and fill in your values:
-
-| Variable | Description |
-|----------|-------------|
-| `ANTHROPIC_AUTH_TOKEN` | Your Bedrock gateway bearer token |
-| `ANTHROPIC_BEDROCK_BASE_URL` | Gateway URL (e.g. `https://...sfdc.sh/bedrock`) |
-| `ANTHROPIC_MODEL` | Model ID (default: `us.anthropic.claude-sonnet-4-5-20250929-v1:0`) |
-| `NODE_EXTRA_CA_CERTS` | Path to CA bundle if behind a corporate proxy (leave blank otherwise) |
-| `PGHOST` | `127.0.0.1` |
-| `PGPORT` | `5432` |
-| `PGUSER` | `demo_studio` |
-| `PGPASSWORD` | `demo_local_dev` |
-| `PGDATABASE` | `demo_studio` |
-| `PGSCHEMA` | `demo` |
-
-### 6. Launch
-
-```bash
-uvicorn app:app --host 0.0.0.0 --port 3777
-```
-
-Open <http://localhost:3777>. On first boot the app seeds a starter dataset automatically.
+See the **Tableau Extensions** section in the [User Guide](USER_GUIDE.md) for setup instructions. The extension files are `static/live-refresh.trex` and `static/live-chat.trex` in the Demo Studio folder.
 
 ---
 
@@ -120,8 +80,11 @@ Open <http://localhost:3777>. On first boot the app seeds a starter dataset auto
 
 | Problem | Fix |
 |---------|-----|
-| `psql` not found after installing PostgreSQL | Close your terminal and open a new one so the PATH updates. On Windows, check `C:\Program Files\PostgreSQL\17\bin` is on your PATH. |
-| PostgreSQL won't start | On Windows: open Services (`services.msc`), find `postgresql-x64-17`, and start it. On Mac: `brew services start postgresql@16`. |
-| `pip install` fails with SSL errors | Set `NODE_EXTRA_CA_CERTS` in `.env` to your corporate CA bundle path, or try `pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt`. |
-| Port 3777 already in use | Another instance is running. Kill it or change the port in `start.bat`/`start.sh`. |
-| Browser opens but page is blank | Wait a few seconds for the server to finish starting. Check the terminal for errors. |
+| **"winget not found"** (Windows) | Install "App Installer" from the Microsoft Store, then re-run `install.bat`. |
+| **"Python not found on PATH after install"** (Windows) | Close the terminal, open a new one, and re-run `install.bat`. Windows needs a new terminal to pick up PATH changes. |
+| **PostgreSQL won't start** | Windows: open Services (`services.msc`), find `postgresql-x64-17`, and start it manually. Mac: run `brew services start postgresql@16`. |
+| **"Cannot authenticate to PostgreSQL as postgres"** | The script tries common default passwords (empty, "postgres", "password"). If yours is different, enter it when prompted. If you don't know your postgres password, check the `pg_hba.conf` file or reinstall PostgreSQL. |
+| **pip install fails** | Delete the `.venv` folder and re-run the install script. This recreates the virtual environment from scratch. |
+| **Port 3777 already in use** | Another instance is running. Close it, or find the process: Windows: `netstat -ano | findstr 3777`, Mac: `lsof -i :3777`. |
+| **Chat returns an error on first message** | Check that your bearer token is correct in `.env`. The `ANTHROPIC_AUTH_TOKEN` value should start with `sk-`. |
+| **"Homebrew not found"** (Mac) | Install Homebrew first: https://brew.sh — then re-run `./install.sh`. |

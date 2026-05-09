@@ -118,7 +118,8 @@ set "PG_AUTH_OK=0"
 for %%P in ("" "postgres" "password") do (
     if "!PG_AUTH_OK!"=="0" (
         set "PGPASSWORD=%%~P"
-        psql -U postgres -h 127.0.0.1 -c "SELECT 1" >nul 2>&1 && (
+        psql -U postgres -h 127.0.0.1 -c "SELECT 1" >nul 2>&1
+        if !errorlevel! equ 0 (
             set "PG_SUPERPASS=%%~P"
             set "PG_AUTH_OK=1"
         )
@@ -208,7 +209,6 @@ echo.
 :: Open browser after a short delay
 start "" cmd /c "timeout /t 3 /nobreak >nul && start http://localhost:%PORT%"
 
-call .venv\Scripts\activate.bat
 python -m uvicorn app:app --host 0.0.0.0 --port %PORT%
 goto :eof
 

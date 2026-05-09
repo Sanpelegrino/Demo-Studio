@@ -13,6 +13,8 @@ After running `install.bat` (Windows) or `./install.sh` (Mac/Linux), the app ope
 
 On first boot, a starter dataset (Superstore) is seeded automatically.
 
+If you're using Tableau Desktop, see **Connecting Tableau** below and then set up the **Live Refresh** and **Live Chat** extensions (see [Tableau Extensions](#tableau-extensions)) to get real-time refresh and embedded chat in your dashboards.
+
 ---
 
 ## Connecting Tableau

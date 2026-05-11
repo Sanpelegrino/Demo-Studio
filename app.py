@@ -216,6 +216,15 @@ def _ensure_seeded() -> None:
             (LIVE_SCHEMA,),
         )
         if cur.fetchone() is None:
+            from seed_superstore import XLS_PATH
+            if not XLS_PATH.exists():
+                logging.info("No Superstore XLS found at %s — starting with empty database.", XLS_PATH)
+                with connect() as c:
+                    c.execute(psycopg.sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(
+                        psycopg.sql.Identifier(LIVE_SCHEMA)
+                    ))
+                    c.commit()
+                return
             logging.info("Seeding initial Superstore dataset…")
             _nuke_schema()
             o, r, p = seed_superstore()

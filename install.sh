@@ -110,7 +110,7 @@ ok "Python dependencies installed."
 if [[ -f .env ]]; then
     echo ""
     read -rp ".env already exists. Overwrite? [y/N]: " OVERWRITE
-    if [[ "${OVERWRITE,,}" != "y" ]]; then
+    if [[ "$OVERWRITE" != "y" && "$OVERWRITE" != "Y" ]]; then
         ok "Keeping existing .env."
     else
         rm .env

@@ -15,12 +15,19 @@ from dotenv import load_dotenv
 from psycopg import sql
 
 
-_DEFAULT_XLS_PATH = Path(
-    r"C:\Users\andrew.hill\Documents\My Tableau Repository"
-    r"\Datasources\2026.1\en_US-US\Sample - Superstore.xls"
-)
+_BUNDLED_XLS = Path(__file__).parent / "data" / "Sample - Superstore.xls"
 
-XLS_PATH = Path(os.environ["SUPERSTORE_XLS_PATH"]) if "SUPERSTORE_XLS_PATH" in os.environ else _DEFAULT_XLS_PATH
+def _resolve_xls_path() -> Path:
+    if "SUPERSTORE_XLS_PATH" in os.environ:
+        return Path(os.environ["SUPERSTORE_XLS_PATH"])
+    if _BUNDLED_XLS.exists():
+        return _BUNDLED_XLS
+    return Path(
+        r"C:\Users\andrew.hill\Documents\My Tableau Repository"
+        r"\Datasources\2026.1\en_US-US\Sample - Superstore.xls"
+    )
+
+XLS_PATH = _resolve_xls_path()
 
 
 def _conn_kwargs() -> dict:

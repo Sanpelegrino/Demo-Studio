@@ -291,7 +291,7 @@ User request:
         url = f"{self.base_url}/model/{effective_model}/invoke"
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 8192,
+            "max_tokens": 80000,
             "system": system_prompt,
             "messages": [{"role": "user", "content": user_content}],
         }
@@ -349,7 +349,7 @@ User request:
         url = f"{self.base_url}/model/{self.model}/invoke"
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 4096,
+            "max_tokens": 80000,
             "system": distill_prompt,
             "messages": [{"role": "user", "content": user_content}],
         }
@@ -396,7 +396,7 @@ User request:
         url = f"{self.base_url}/model/{self.model}/invoke"
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 8192,
+            "max_tokens": 80000,
             "system": rag_prompt,
             "messages": [{"role": "user", "content": user_content}],
         }
